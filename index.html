@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>2048</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="game">
+    <header class="header">
+      <h1 class="title">2048</h1>
+      <div class="scores">
+        <div class="score-box">
+          <div class="label">分数</div>
+          <div class="value" id="score">0</div>
+        </div>
+        <div class="score-box">
+          <div class="label">最高分</div>
+          <div class="value" id="best">0</div>
+        </div>
+      </div>
+    </header>
+
+    <div class="controls">
+      <p class="hint">合并数字，凑出 <strong>2048</strong>！</p>
+      <div class="buttons">
+        <button class="btn" id="undo" type="button">撤销</button>
+        <button class="btn btn-primary" id="new-game" type="button">新游戏</button>
+      </div>
+    </div>
+
+    <div class="board" id="board">
+      <div class="cell-layer" id="cell-layer"></div>
+      <div class="tile-layer" id="tile-layer"></div>
+    </div>
+
+    <p class="footer">使用方向键或 WASD 移动 · 手机可滑动操作</p>
+  </main>
+
+  <div class="overlay" id="message">
+    <div class="overlay-card">
+      <h2 id="message-text">游戏结束</h2>
+      <p class="sub" id="message-sub"></p>
+      <div class="buttons">
+        <button class="btn" id="keep-going" type="button">继续游戏</button>
+        <button class="btn btn-primary" id="try-again" type="button">再来一局</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="game.js"></script>
+  <script src="main.js"></script>
+</body>
+</html>
