@@ -1,13 +1,17 @@
 /*
- * 2048 — 界面与交互（依赖 game.js 提供的 Game2048 全局对象）
+ * 2048 — 界面与交互（依赖 game.js 的 Game2048 与 ai.js 的 AI2048）。
  */
 (function () {
   'use strict';
 
   const Game = window.Game2048;
+  const AI = window.AI2048;
   const SIZE = Game.SIZE;
   const BEST_KEY = '2048.best.score';
   const SLIDE_MS = 120;
+  const FALLBACK_DEPTH = 3; // Worker 不可用时回退到主线程的深度上限
+
+  const DIR_LABEL = { left: '← 左', right: '→ 右', up: '↑ 上', down: '↓ 下' };
 
   // DOM
   const boardEl = document.getElementById('board');
@@ -23,6 +27,18 @@
   const keepBtn = document.getElementById('keep-going');
   const tryAgainBtn = document.getElementById('try-again');
 
+  // AI 面板 DOM
+  const aiToggleBtn = document.getElementById('ai-toggle');
+  const aiDepthEl = document.getElementById('ai-depth');
+  const aiSpeedEl = document.getElementById('ai-speed');
+  const depthValEl = document.getElementById('depth-val');
+  const speedValEl = document.getElementById('speed-val');
+  const aiDecisionEl = document.getElementById('ai-decision');
+  const aiNodesEl = document.getElementById('ai-nodes');
+  const aiStepsEl = document.getElementById('ai-steps');
+  const aiScoreEl = document.getElementById('ai-score');
+  const aiNoteEl = document.getElementById('ai-note');
+
   // 状态
   let board = null;
   let score = 0;
@@ -33,6 +49,17 @@
   let wonFlag = false;
   let animTimer = null;
   const layout = { cell: 0, gap: 0, width: 0 };
+
+  // AI 状态
+  let aiRunning = false;
+  let aiThinking = false;
+  let aiSteps = 0;
+  let aiTimer = null;
+  let aiWatchdog = null;
+  let requestSeq = 0;
+  let pendingCb = null;
+  let worker = null;
+  let useWorker = false;
 
   // ---------- 高分持久化 ----------
   function loadBest() {
@@ -140,6 +167,7 @@
   function updateScores() {
     scoreEl.textContent = score;
     bestEl.textContent = best;
+    aiScoreEl.textContent = score;
   }
   function updateUndo() {
     undoBtn.disabled = history.length === 0;
@@ -196,6 +224,7 @@
 
   function undo() {
     if (busy || history.length === 0) return;
+    if (aiRunning) stopAI();
     const prev = history.pop();
     board = prev.board;
     score = prev.score;
@@ -207,6 +236,7 @@
   }
 
   function start() {
+    if (aiRunning) stopAI();
     if (animTimer) { clearTimeout(animTimer); animTimer = null; }
     busy = false;
     board = Game.createEmptyBoard(SIZE);
@@ -221,16 +251,20 @@
     renderBoard(true);
     updateScores();
     updateUndo();
+    resetAIStats();
   }
 
   function checkEnd() {
-    if (!wonFlag && Game.hasWon(board)) {
-      wonFlag = true;
-      showMessage('你赢了！🎉', '已经凑出 2048，可以继续挑战更高分。', true);
+    if (Game.isGameOver(board)) {
+      stopAI();
+      showMessage('游戏结束', '没有可移动的方块了，再试一次吧。', false);
       return;
     }
-    if (Game.isGameOver(board)) {
-      showMessage('游戏结束', '没有可移动的方块了，再试一次吧。', false);
+    if (!wonFlag && Game.hasWon(board)) {
+      wonFlag = true;
+      if (!aiRunning) {
+        showMessage('你赢了！🎉', '已经凑出 2048，可以继续挑战更高分。', true);
+      }
     }
   }
 
@@ -249,6 +283,145 @@
     }
   }
 
+  // ---------- AI ----------
+  function initWorker() {
+    try {
+      worker = new Worker('ai-worker.js');
+      worker.onmessage = (e) => {
+        const { type, id, result } = e.data;
+        if (type === 'result' && pendingCb && pendingCb.id === id) {
+          const cb = pendingCb.cb;
+          pendingCb = null;
+          aiThinking = false;
+          clearTimeout(aiWatchdog);
+          cb(result);
+        }
+      };
+      worker.onerror = () => {
+        useWorker = false;
+        try { worker.terminate(); } catch (e) { /* 忽略 */ }
+        worker = null;
+        setAINote();
+      };
+      useWorker = true;
+    } catch (e) {
+      useWorker = false;
+      worker = null;
+    }
+    setAINote();
+  }
+
+  function setAINote() {
+    if (useWorker) {
+      aiNoteEl.textContent = 'AI 在 Web Worker 中运行，搜索不阻塞页面交互。';
+    } else {
+      aiNoteEl.textContent = '未启用 Worker（file:// 直接打开时浏览器会禁止），AI 在主线程以深度 ≤ 3 运行；通过本地服务器打开可获得完整深度与更流畅体验。';
+    }
+  }
+
+  function currentDepth() {
+    return Math.max(1, Math.min(4, parseInt(aiDepthEl.value, 10) || 3));
+  }
+  function currentSpeedMs() {
+    const s = Math.max(0, Math.min(100, parseInt(aiSpeedEl.value, 10) || 60));
+    return Math.round(700 - s * 6.8); // 0 -> 700ms，100 -> 20ms
+  }
+  function formatNodes(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + 'k';
+    return String(n);
+  }
+  function updateSpeedLabel() {
+    const s = parseInt(aiSpeedEl.value, 10) || 60;
+    speedValEl.textContent = s >= 70 ? '快' : (s >= 35 ? '中' : '慢');
+  }
+
+  function requestDecision(grid, depth, cb) {
+    aiThinking = true;
+    const id = ++requestSeq;
+    if (useWorker && worker) {
+      pendingCb = { id, cb };
+      worker.postMessage({ type: 'move', id, grid, depth });
+      clearTimeout(aiWatchdog);
+      aiWatchdog = setTimeout(() => {
+        if (pendingCb && pendingCb.id === id) {
+          pendingCb = null;
+          useWorker = false;
+          try { worker.terminate(); } catch (e) { /* 忽略 */ }
+          worker = null;
+          aiThinking = false;
+          setAINote();
+          cb(AI.chooseMoveFlat(grid, Math.min(depth, FALLBACK_DEPTH)));
+        }
+      }, 30000);
+    } else {
+      setTimeout(() => {
+        const result = AI.chooseMoveFlat(grid, Math.min(depth, FALLBACK_DEPTH));
+        aiThinking = false;
+        cb(result);
+      }, 0);
+    }
+  }
+
+  function aiTick() {
+    if (!aiRunning) return;
+    if (busy) { aiTimer = setTimeout(aiTick, 20); return; }
+    if (aiThinking) return;
+    if (Game.isGameOver(board)) { stopAI(); return; }
+
+    aiDecisionEl.textContent = '思考中…';
+    const grid = AI.toFlat(board);
+    const depth = currentDepth();
+
+    requestDecision(grid, depth, (result) => {
+      if (!aiRunning) return;
+      aiNodesEl.textContent = formatNodes(result.nodes);
+      if (result.direction) {
+        aiDecisionEl.textContent = DIR_LABEL[result.direction];
+        aiSteps++;
+        aiStepsEl.textContent = aiSteps;
+        doMove(result.direction);
+        aiTimer = setTimeout(aiTick, SLIDE_MS + currentSpeedMs() + 10);
+      } else {
+        aiDecisionEl.textContent = '无';
+        stopAI();
+      }
+    });
+  }
+
+  function startAI() {
+    if (Game.isGameOver(board)) start(); // 已结束则先重开一局
+    aiRunning = true;
+    aiSteps = 0;
+    aiStepsEl.textContent = '0';
+    aiDecisionEl.textContent = '—';
+    aiNodesEl.textContent = '0';
+    aiToggleBtn.textContent = 'AI 暂停';
+    aiToggleBtn.classList.add('active');
+    aiTick();
+  }
+
+  function stopAI() {
+    aiRunning = false;
+    aiThinking = false;
+    pendingCb = null;
+    if (aiTimer) { clearTimeout(aiTimer); aiTimer = null; }
+    aiToggleBtn.textContent = 'AI 开始';
+    aiToggleBtn.classList.remove('active');
+  }
+
+  function aiToggle() {
+    if (aiRunning) stopAI(); else startAI();
+  }
+
+  function resetAIStats() {
+    aiSteps = 0;
+    aiStepsEl.textContent = '0';
+    aiDecisionEl.textContent = '—';
+    aiNodesEl.textContent = '0';
+    aiScoreEl.textContent = score;
+  }
+
   // ---------- 事件 ----------
   const keyMap = {
     ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right',
@@ -259,6 +432,7 @@
     const dir = keyMap[e.key];
     if (dir) {
       e.preventDefault();
+      if (aiRunning) stopAI(); // 手动接管时自动暂停 AI
       doMove(dir);
     }
   });
@@ -278,6 +452,7 @@
     const dir = Math.abs(dx) > Math.abs(dy)
       ? (dx > 0 ? 'right' : 'left')
       : (dy > 0 ? 'down' : 'up');
+    if (aiRunning) stopAI();
     doMove(dir);
   }, { passive: true });
 
@@ -286,9 +461,15 @@
   keepBtn.addEventListener('click', hideMessage);
   undoBtn.addEventListener('click', undo);
 
+  aiToggleBtn.addEventListener('click', aiToggle);
+  aiDepthEl.addEventListener('input', () => { depthValEl.textContent = aiDepthEl.value; });
+  aiSpeedEl.addEventListener('input', updateSpeedLabel);
+
   window.addEventListener('resize', relayout);
 
   // ---------- 启动 ----------
   loadBest();
+  updateSpeedLabel();
+  initWorker();
   start();
 })();

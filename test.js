@@ -2,6 +2,7 @@
 
 const assert = require('assert');
 const Game = require('./game.js');
+const AI = require('./ai.js');
 
 const board = (nums) => Game.fromNumbers(nums);
 const nums = (b) => Game.toNumbers(b);
@@ -116,6 +117,67 @@ test('合并产生 survivor/absorbed 元数据与目标位置', () => {
   assert.notStrictEqual(r.merges[0].survivorId, r.merges[0].absorbedId);
   assert.ok(r.merges[0].target, 'merge target should be set');
   eq([r.merges[0].target.r, r.merges[0].target.c], [0, 0]);
+});
+
+// —— AI：移动逻辑交叉验证 ——
+test('AI 快速移动与 game.js 移动结果一致（随机棋盘 × 4 方向）', () => {
+  let seed = 20261019;
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  for (let iter = 0; iter < 300; iter++) {
+    const flat = [];
+    for (let i = 0; i < 16; i++) {
+      flat[i] = rand() < 0.35 ? 0 : (1 << (1 + Math.floor(rand() * 6))); // 0 或 2..64
+    }
+    const grid2d = [flat.slice(0, 4), flat.slice(4, 8), flat.slice(8, 12), flat.slice(12, 16)];
+    const b = Game.fromNumbers(grid2d);
+    for (const dir of ['left', 'right', 'up', 'down']) {
+      const gm = Game.move(b, dir);
+      const expected = Game.toNumbers(gm.board);
+      const ai = AI.moveFlat(AI.toFlat(b), dir);
+      const actual = [ai.grid.slice(0, 4), ai.grid.slice(4, 8), ai.grid.slice(8, 12), ai.grid.slice(12, 16)];
+      assert.deepStrictEqual(actual, expected, '棋盘不一致 dir=' + dir);
+      assert.strictEqual(ai.score, gm.score, '得分不一致 dir=' + dir);
+    }
+  }
+});
+
+// —— AI：搜索决策 ——
+test('AI 深度1：合并两个 4 优于不合并的竖移', () => {
+  const r = AI.chooseMoveFlat([4, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 1);
+  assert.ok(['left', 'right'].includes(r.direction), '应选 left/right，实际 ' + r.direction);
+});
+
+test('AI 保持最大值在角落：[[32,0,0,2]] 选 left', () => {
+  const r = AI.chooseMoveFlat([32, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 1);
+  assert.strictEqual(r.direction, 'left');
+});
+
+test('AI 在游戏结束棋盘上返回 direction=null', () => {
+  const g = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
+  assert.strictEqual(AI.chooseMoveFlat(g, 2).direction, null);
+});
+
+test('AI 对象棋盘 chooseMove 返回合法方向且节点数 > 0', () => {
+  const b = Game.fromNumbers([[2, 4, 8, 16], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]);
+  const r = AI.chooseMove(b, 2);
+  assert.ok(['left', 'right', 'up', 'down'].includes(r.direction));
+  assert.ok(r.nodes > 0);
+});
+
+// —— AI：启发式 ——
+test('heuristic：空格越多分数越高（空棋盘 > 一个2）', () => {
+  const empty = new Array(16).fill(0);
+  const one = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  assert.ok(AI.heuristic(empty) > AI.heuristic(one));
+});
+
+test('heuristic：最大值在角落优于在中心', () => {
+  const corner = [16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const center = [0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  assert.ok(AI.heuristic(corner) > AI.heuristic(center));
 });
 
 // —— 运行 ——
