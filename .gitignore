@@ -6,3 +6,9 @@ bench/prof/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+
+# 强化学习训练产物
+rl/checkpoints/
+rl/logs/
+*.pt
+*.pth
