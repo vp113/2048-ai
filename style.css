@@ -14,6 +14,9 @@
 
 html, body { height: 100%; }
 
+/* 预留滚动条宽度，避免内容高度轻微变化时滚动条出现/消失导致整页横向跳动 */
+html { scrollbar-gutter: stable; }
+
 body {
   font-family: "Segoe UI", system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
   color: var(--text);
@@ -254,6 +257,10 @@ body {
 .ai-stats .stat {
   flex: 1 1 0;
   min-width: 72px;
+  height: 58px; /* 固定高度：文字内容变化绝不改变面板高度 */
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
   background: #eee4da;
   border-radius: 8px;
   padding: 8px 10px;
@@ -269,6 +276,10 @@ body {
   display: block;
   font-size: 18px;
   font-weight: 800;
+  line-height: 1.2;
+  white-space: nowrap;      /* 禁止换行，避免“思考中…”把面板撑高 */
+  overflow: hidden;
+  text-overflow: ellipsis;
   font-variant-numeric: tabular-nums;
 }
 .ai-note {

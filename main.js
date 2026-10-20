@@ -370,7 +370,7 @@
     if (aiThinking) return;
     if (Game.isGameOver(board)) { stopAI(); return; }
 
-    aiDecisionEl.textContent = '思考中…';
+    aiDecisionEl.textContent = '思考中';
     const grid = AI.toFlat(board);
     const depth = currentDepth();
 
