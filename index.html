@@ -19,15 +19,29 @@
           <div class="label">最高分</div>
           <div class="value" id="best">0</div>
         </div>
+        <div class="score-box">
+          <div class="label">最大方块</div>
+          <div class="value" id="max-tile">0</div>
+        </div>
       </div>
     </header>
 
     <div class="controls">
-      <p class="hint">合并数字，凑出 <strong>2048</strong>！</p>
+      <p class="hint">高性能 Expectimax AI · 自动游玩</p>
       <div class="buttons">
-        <button class="btn" id="undo" type="button">撤销</button>
-        <button class="btn btn-primary" id="new-game" type="button">新游戏</button>
+        <button class="btn btn-ai" id="ai-toggle" type="button">AI 开始</button>
+        <button class="btn" id="restart" type="button">重新开始</button>
       </div>
+    </div>
+
+    <div class="speed-row">
+      <span class="speed-label">速度</span>
+      <div class="segmented" id="speed">
+        <button type="button" data-speed="normal" class="active">普通</button>
+        <button type="button" data-speed="fast">快速</button>
+        <button type="button" data-speed="extreme">极速</button>
+      </div>
+      <span class="session" id="session">第 1 局 · 已完成 0 局</span>
     </div>
 
     <div class="board" id="board">
@@ -35,48 +49,34 @@
       <div class="tile-layer" id="tile-layer"></div>
     </div>
 
-    <section class="ai-panel">
-      <div class="ai-head">
-        <button class="btn btn-ai" id="ai-toggle" type="button">AI 开始</button>
-        <div class="ai-sliders">
-          <label class="slider">
-            <span>深度</span>
-            <input type="range" id="ai-depth" min="1" max="4" step="1" value="3">
-            <b id="depth-val">3</b>
-          </label>
-          <label class="slider">
-            <span>速度</span>
-            <input type="range" id="ai-speed" min="0" max="100" step="1" value="60">
-            <b id="speed-val">中</b>
-          </label>
-        </div>
-      </div>
-      <div class="ai-stats">
-        <div class="stat"><span class="k">决策</span><span class="v" id="ai-decision">—</span></div>
-        <div class="stat"><span class="k">节点</span><span class="v" id="ai-nodes">0</span></div>
-        <div class="stat"><span class="k">命中率</span><span class="v" id="ai-hits">—</span></div>
-        <div class="stat"><span class="k">步数</span><span class="v" id="ai-steps">0</span></div>
-        <div class="stat"><span class="k">得分</span><span class="v" id="ai-score">0</span></div>
-      </div>
-      <p class="ai-note" id="ai-note"></p>
-    </section>
+    <div class="statusbar">
+      <span class="status" id="ai-status">正在连接 AI 服务…</span>
+      <span class="achievements" id="achievements"></span>
+    </div>
 
-    <p class="footer">方向键 / WASD 移动 · 手机可滑动 · AI 模式基于 Expectimax 搜索</p>
+    <div class="footer">
+      <span>
+        AI: <a href="https://github.com/macroxue/2048-ai" target="_blank" rel="noopener">macroxue/2048-ai</a>
+        · GPL-3.0 · depth 3
+      </span>
+      <a id="replay-download" class="link" href="#" hidden>下载最佳回放</a>
+    </div>
   </main>
+
+  <div class="toast" id="toast" role="status"></div>
 
   <div class="overlay" id="message">
     <div class="overlay-card">
-      <h2 id="message-text">游戏结束</h2>
+      <h2 id="message-text">本局结束</h2>
       <p class="sub" id="message-sub"></p>
       <div class="buttons">
-        <button class="btn" id="keep-going" type="button">继续游戏</button>
-        <button class="btn btn-primary" id="try-again" type="button">再来一局</button>
+        <button class="btn btn-primary" id="message-action" type="button">继续挑战</button>
       </div>
     </div>
   </div>
 
   <script src="game.js"></script>
-  <script src="ai.js"></script>
+  <script src="ai-client.js"></script>
   <script src="main.js"></script>
 </body>
 </html>
