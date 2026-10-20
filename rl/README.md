@@ -200,15 +200,43 @@ python -m rl.dqn.train \
   --epsilon-decay-steps 50000 \
   --target-update-freq 1000 \
   --eval-frequency 5000 \
-  --eval-episodes 5 \
+  --eval-episodes 20 \
+  --eval-seed 1000000 \
   --checkpoint-frequency 5000 \
   --checkpoint-dir rl/checkpoints \
   --log-frequency 100 \
+  --reward-scale 1.0 \
   --seed 0
 ```
 
+- `--reward-scale` 默认 `1.0`，即保留原始合并分数奖励；设为 `0.01` 等可做奖励缩放实验。
+- 诊断指标默认开启；`--no-collect-diagnostics` 可关闭，几乎不影响速度。
+- 所有周期性评估使用固定的 `--eval-seed` 和 `--eval-episodes`，保证不同 checkpoint 可比。
+
 日志每行记录：`episode`、`env_steps`、`avg_score`、`avg_max_tile`、`best_max_tile`、`epsilon`、`loss`、`elapsed`。
-可加 `--log-csv rl/logs/train.csv` 额外写入 CSV。
+
+启用诊断时还会输出第二行：
+
+```
+diag: q_mean=... q_abs_max=... target_mean=... td_abs_mean=... grad_norm=... reward_mean=...
+```
+
+- `q_mean` / `q_abs_max`：当前 batch 的预测 Q 均值 / 最大绝对值
+- `target_mean`：Bellman target 均值
+- `td_abs_mean`：`|target - Q|` 均值
+- `grad_norm`：裁剪前的梯度范数
+- `reward_mean`：batch 的原始奖励均值（未乘 `reward_scale`）
+
+可加 `--log-csv rl/logs/train.csv` 写入 CSV；新增诊断列与日志字段一致。
+
+每次评估还会在 checkpoint 目录写入 `eval_metrics.csv`，包含：
+
+- `env_steps`、`episodes`、`avg_score`、`avg_max_tile`、`reach_2048_rate`
+- `action_up_frac` / `action_right_frac` / `action_down_frac` / `action_left_frac`
+- 最近一次训练日志窗口的 Q/Target/TD/梯度/奖励诊断
+- `is_best`
+
+评估日志行也会打印动作频率（上/右/下/左）以及 `q_mean`、`td_abs`、`grad`。
 
 ## 评估命令
 
@@ -226,12 +254,17 @@ python -m rl.dqn.evaluate \
 - 最大方块分布
 - 达到 2048 的比例
 - 平均步数
-- 可选 `--json` 输出结果文件
+- 四个动作（上/右/下/左）的选择频率
+- 可选 `--json` 输出结果文件（包含动作计数与频率）
 
 ## Checkpoint 与恢复
 
 Checkpoint 保存：在线网络、目标网络、优化器状态、配置、训练步数和元信息。默认保存 `latest.pt`、周期性
-`checkpoint_step_XXXXXXX.pt` 和最终的 `final.pt`。
+`checkpoint_step_XXXXXXX.pt`、最终的 `final.pt`，以及按固定评估集平均得分选出的 **`best.pt`**。
+
+- `best.pt` 每次周期性评估后更新：平均得分更高则保存；得分相同时用平均最大方块作为 tie-break。
+- 旧的 50k 实验使用“每次评估不同 seed”，因此其 5k 评估趋势带有额外评估方差；新代码默认固定 `eval_seed`。旧日志与
+  checkpoint 均保留在 `rl/checkpoints/run_seed0/`、`rl/logs/dqn_seed0*`，不会被覆盖。
 
 ```bash
 python -m rl.dqn.train --resume rl/checkpoints/latest.pt --total-steps 100000
@@ -254,8 +287,11 @@ python -m pytest rl/tests -q
 - ε-greedy 下只选择合法动作；非法动作 Q 被屏蔽
 - Double DQN 目标值（在线网络选动作、目标网络估值、终止/无合法动作不打 bootstrap）
 - 训练一步后参数变化、目标网络定期同步
+- Q mean / Q abs max / target mean / TD abs mean / grad norm / raw reward mean 诊断
+- reward scale 影响 Bellman target，但不改变原始奖励诊断
+- 评估动作频率统计
 - Checkpoint 保存/加载/`from_checkpoint`
-- 80 步端到端训练 smoke test
+- 80 步端到端训练 smoke test，包含 `best.pt`、训练 CSV 诊断列和 `eval_metrics.csv`
 
 ## 已知限制（第二阶段）
 
@@ -264,6 +300,8 @@ python -m pytest rl/tests -q
 - Checkpoint 不保存经验池，也只在 episode 边界近似恢复；随机数流不保证完全续接。
 - 训练循环有 `max_episode_steps` 安全上限；达到上限时按截断（done）处理。
 - 评估的平均最大方块是算术平均，具体表现请结合分布与 2048 达成率看。
+- 诊断指标是 batch 级近似；Q/target/TD 的均值会受 batch 中状态分布影响，适合看趋势而不是绝对精度。
+- `best.pt` 依据固定评估集的平均得分；评估局数较少时仍可能有方差，建议至少 20 局。
 - GPU 代码路径已支持（`--device cuda`），但本机只验证了 CPU。
 
 ## 阶段范围

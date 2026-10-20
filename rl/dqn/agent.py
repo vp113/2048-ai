@@ -36,6 +36,8 @@ class DQNConfig:
     target_update_freq: int = 1_000
     grad_clip_norm: float = 10.0
     huber_beta: float = 1.0
+    reward_scale: float = 1.0  # 1.0 = original raw merge-score reward
+    collect_diagnostics: bool = True
 
     # Exploration
     epsilon_start: float = 1.0
@@ -52,6 +54,7 @@ class DQNConfig:
     log_frequency: int = 100
     eval_frequency: int = 5_000
     eval_episodes: int = 5
+    eval_seed: int = 1_000_000  # fixed evaluation set, shared by all checkpoints
     checkpoint_frequency: int = 5_000
     checkpoint_dir: str = "rl/checkpoints"
     max_episode_steps: int = 10_000
@@ -116,6 +119,8 @@ class DoubleDQNAgent:
             raise ValueError("target_update_freq must be positive")
         if not (0.0 <= config.gamma <= 1.0):
             raise ValueError("gamma must be in [0, 1]")
+        if config.reward_scale <= 0:
+            raise ValueError("reward_scale must be positive")
 
         set_seed(config.seed)
         self.device = resolve_device(config.device)
@@ -132,6 +137,7 @@ class DoubleDQNAgent:
         )
         self.loss_fn = nn.SmoothL1Loss(beta=config.huber_beta)
         self.train_steps = 0
+        self.last_train_metrics: Dict[str, float] = {}
 
     # ------------------------------------------------------------------
     # Acting
@@ -186,17 +192,32 @@ class DoubleDQNAgent:
     # ------------------------------------------------------------------
     # Learning
     # ------------------------------------------------------------------
-    def train_step(self, batch: Dict[str, np.ndarray]) -> float:
-        """One Double DQN update; returns the scalar Huber loss."""
+    def train_step(
+        self,
+        batch: Dict[str, np.ndarray],
+        collect_diagnostics: Optional[bool] = None,
+    ) -> float:
+        """One Double DQN update; returns the scalar Huber loss.
+
+        Diagnostics are cheap scalar reductions over the replay batch.  They
+        can be disabled per call or globally via ``config.collect_diagnostics``.
+        """
+        collect = (
+            self.config.collect_diagnostics
+            if collect_diagnostics is None
+            else bool(collect_diagnostics)
+        )
+
         states = torch.as_tensor(
             batch["states"], dtype=torch.float32, device=self.device
         )
         actions = torch.as_tensor(
             batch["actions"], dtype=torch.long, device=self.device
         )
-        rewards = torch.as_tensor(
+        raw_rewards = torch.as_tensor(
             batch["rewards"], dtype=torch.float32, device=self.device
         )
+        rewards = raw_rewards * float(self.config.reward_scale)
         next_states = torch.as_tensor(
             batch["next_states"], dtype=torch.float32, device=self.device
         )
@@ -222,10 +243,21 @@ class DoubleDQNAgent:
                 self.config.gamma,
             )
 
+        metrics: Dict[str, float] = {}
+        if collect:
+            with torch.no_grad():
+                metrics = {
+                    "q_mean": float(q_values.mean().item()),
+                    "q_abs_max": float(q_values.abs().max().item()),
+                    "target_mean": float(targets.mean().item()),
+                    "td_abs_mean": float((targets - q_values).abs().mean().item()),
+                    "reward_mean": float(raw_rewards.mean().item()),
+                }
+
         loss = self.loss_fn(q_values, targets)
         self.optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(
+        grad_norm = torch.nn.utils.clip_grad_norm_(
             self.online.parameters(), self.config.grad_clip_norm
         )
         self.optimizer.step()
@@ -233,6 +265,12 @@ class DoubleDQNAgent:
         self.train_steps += 1
         if self.train_steps % self.config.target_update_freq == 0:
             self.target.load_state_dict(self.online.state_dict())
+
+        if collect:
+            metrics["grad_norm"] = float(grad_norm.item())
+            self.last_train_metrics = metrics
+        else:
+            self.last_train_metrics = {}
 
         return float(loss.item())
 

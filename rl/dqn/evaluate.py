@@ -16,7 +16,10 @@ from .agent import DoubleDQNAgent
 from .network import encode_board
 
 
-def summarize_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def summarize_results(
+    results: List[Dict[str, Any]],
+    action_counts: Optional[np.ndarray] = None,
+) -> Dict[str, Any]:
     if not results:
         raise ValueError("no evaluation results")
 
@@ -24,6 +27,18 @@ def summarize_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     max_tiles = np.array([r["max_tile"] for r in results], dtype=np.int64)
     steps = np.array([r["steps"] for r in results], dtype=np.float64)
     distribution = Counter(int(tile) for tile in max_tiles)
+
+    counts = (
+        np.asarray(action_counts, dtype=np.int64)
+        if action_counts is not None
+        else np.zeros(4, dtype=np.int64)
+    )
+    total_actions = int(counts.sum())
+    frequencies = (
+        counts.astype(np.float64) / total_actions
+        if total_actions
+        else np.zeros(4, dtype=np.float64)
+    )
 
     return {
         "episodes": len(results),
@@ -37,6 +52,9 @@ def summarize_results(results: List[Dict[str, Any]]) -> Dict[str, Any]:
         "reach_2048_rate": float(np.mean(max_tiles >= 2048)),
         "average_steps": float(steps.mean()),
         "capped_episodes": int(sum(1 for r in results if r["capped"])),
+        # Order: up, right, down, left
+        "action_counts": [int(value) for value in counts],
+        "action_frequencies": [float(value) for value in frequencies],
     }
 
 
@@ -56,6 +74,7 @@ def evaluate_agent(
     was_training = agent.online.training
     agent.online.eval()
     results: List[Dict[str, Any]] = []
+    action_counts = np.zeros(4, dtype=np.int64)
 
     try:
         for i in range(episodes):
@@ -73,6 +92,7 @@ def evaluate_agent(
                     epsilon=0.0,
                     rng=rng,
                 )
+                action_counts[int(action)] += 1
                 obs, _, terminated, truncated, info = env.step(action)
                 steps += 1
 
@@ -93,7 +113,7 @@ def evaluate_agent(
     finally:
         agent.online.train(was_training)
 
-    return summarize_results(results)
+    return summarize_results(results, action_counts)
 
 
 def print_stats(stats: Dict[str, Any]) -> None:
@@ -108,6 +128,15 @@ def print_stats(stats: Dict[str, Any]) -> None:
     print(
         "Max tile distribution: "
         + ", ".join(f"{tile}: {count}" for tile, count in stats["max_tile_distribution"].items())
+    )
+    frequencies = stats.get("action_frequencies", [0.0, 0.0, 0.0, 0.0])
+    names = ("up", "right", "down", "left")
+    print(
+        "Action frequencies: "
+        + ", ".join(
+            f"{name}={frequency * 100:.1f}%"
+            for name, frequency in zip(names, frequencies)
+        )
     )
 
 

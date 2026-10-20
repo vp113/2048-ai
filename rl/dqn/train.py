@@ -26,6 +26,15 @@ from .evaluate import evaluate_agent
 from .network import encode_board
 from .replay_buffer import ReplayBuffer
 
+DIAG_NAMES = (
+    "q_mean",
+    "q_abs_max",
+    "target_mean",
+    "td_abs_mean",
+    "grad_norm",
+    "reward_mean",
+)
+
 
 def _fmt(value: Optional[float], digits: int = 2) -> str:
     return "n/a" if value is None else f"{value:.{digits}f}"
@@ -52,6 +61,10 @@ def train(
     env_steps = 0
     episode_index = 0
     best_max_tile = 0
+    best_eval_score: Optional[float] = None
+    best_eval_max_tile: Optional[float] = None
+    best_eval_step: Optional[int] = None
+    best_path: Optional[Path] = None
     if resume_path is not None:
         meta = agent.load_checkpoint(resume_path)
         env_steps = int(meta.get("env_steps", 0))
@@ -65,6 +78,25 @@ def train(
 
     checkpoint_dir = Path(config.checkpoint_dir)
     checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+    eval_csv_path = checkpoint_dir / "eval_metrics.csv"
+    eval_csv_file = eval_csv_path.open("w", newline="", encoding="utf-8")
+    eval_csv_writer = csv.writer(eval_csv_file)
+    eval_csv_writer.writerow(
+        [
+            "env_steps",
+            "episodes",
+            "avg_score",
+            "avg_max_tile",
+            "reach_2048_rate",
+            "action_up_frac",
+            "action_right_frac",
+            "action_down_frac",
+            "action_left_frac",
+            *DIAG_NAMES,
+            "is_best",
+        ]
+    )
 
     csv_file = None
     csv_writer = None
@@ -82,6 +114,7 @@ def train(
                 "best_max_tile",
                 "epsilon",
                 "loss",
+                *DIAG_NAMES,
                 "elapsed_sec",
             ]
         )
@@ -92,6 +125,9 @@ def train(
     loss_count = 0
     last_loss: Optional[float] = None
     updates = 0
+    diag_sums = {name: 0.0 for name in DIAG_NAMES}
+    diag_count = 0
+    last_diag_avg: Dict[str, Optional[float]] = {name: None for name in DIAG_NAMES}
     start_time = time.perf_counter()
 
     if verbose:
@@ -103,20 +139,28 @@ def train(
             f"buffer={config.buffer_capacity}, "
             f"eps={config.epsilon_start}->{config.epsilon_end} "
             f"over {config.epsilon_decay_steps} steps, "
-            f"target_update={config.target_update_freq}"
+            f"target_update={config.target_update_freq}, "
+            f"reward_scale={config.reward_scale}, "
+            f"eval_seed={config.eval_seed}, "
+            f"diagnostics={config.collect_diagnostics}"
         )
 
     def current_epsilon() -> float:
         return agent.epsilon_by_step(env_steps)
 
     def write_log(force: bool = False) -> None:
-        nonlocal loss_sum, loss_count
+        nonlocal loss_sum, loss_count, diag_count
         if not force and (config.log_frequency <= 0 or env_steps % config.log_frequency != 0):
             return
 
         avg_score = float(np.mean(recent_scores)) if recent_scores else None
         avg_max_tile = float(np.mean(recent_max_tiles)) if recent_max_tiles else None
         loss = loss_sum / loss_count if loss_count else None
+        diag_avg = {
+            name: (diag_sums[name] / diag_count if diag_count else None)
+            for name in DIAG_NAMES
+        }
+        last_diag_avg.update(diag_avg)
         elapsed = time.perf_counter() - start_time
 
         if verbose:
@@ -128,6 +172,13 @@ def train(
                 f"epsilon={current_epsilon():.3f} "
                 f"loss={_fmt(loss, 4)} elapsed={elapsed:.2f}s"
             )
+            if config.collect_diagnostics and diag_count:
+                print(
+                    "  diag: "
+                    + " ".join(
+                        f"{name}={_fmt(diag_avg[name], 4)}" for name in DIAG_NAMES
+                    )
+                )
 
         if csv_writer is not None:
             csv_writer.writerow(
@@ -139,6 +190,10 @@ def train(
                     best_max_tile,
                     f"{current_epsilon():.4f}",
                     "" if loss is None else f"{loss:.6f}",
+                    *[
+                        "" if diag_avg[name] is None else f"{diag_avg[name]:.6f}"
+                        for name in DIAG_NAMES
+                    ],
                     f"{elapsed:.3f}",
                 ]
             )
@@ -146,6 +201,9 @@ def train(
 
         loss_sum = 0.0
         loss_count = 0
+        for name in DIAG_NAMES:
+            diag_sums[name] = 0.0
+        diag_count = 0
 
     def checkpoint_meta() -> Dict[str, Any]:
         return {
@@ -194,6 +252,10 @@ def train(
             loss_sum += loss
             loss_count += 1
             last_loss = loss
+            if agent.last_train_metrics:
+                for name in DIAG_NAMES:
+                    diag_sums[name] += agent.last_train_metrics[name]
+                diag_count += 1
 
         if done:
             recent_scores.append(float(next_info["score"]))
@@ -217,15 +279,63 @@ def train(
             eval_stats = evaluate_agent(
                 agent,
                 episodes=config.eval_episodes,
-                seed=config.seed + 1_000_000 + env_steps,
+                seed=config.eval_seed,  # fixed evaluation set across checkpoints
                 env=eval_env,
                 max_steps=config.max_episode_steps,
             )
+            is_best = (
+                best_eval_score is None
+                or eval_stats["average_score"] > best_eval_score
+                or (
+                    eval_stats["average_score"] == best_eval_score
+                    and eval_stats["average_max_tile"] > (best_eval_max_tile or 0.0)
+                )
+            )
+            if is_best:
+                best_eval_score = eval_stats["average_score"]
+                best_eval_max_tile = eval_stats["average_max_tile"]
+                best_eval_step = env_steps
+                best_meta = checkpoint_meta()
+                best_meta["eval"] = eval_stats
+                best_meta["best_eval_score"] = best_eval_score
+                best_path = agent.save_checkpoint(
+                    checkpoint_dir / "best.pt", meta=best_meta
+                )
+
+            freqs = eval_stats.get("action_frequencies", [0.0, 0.0, 0.0, 0.0])
+            eval_csv_writer.writerow(
+                [
+                    env_steps,
+                    config.eval_episodes,
+                    f"{eval_stats['average_score']:.2f}",
+                    f"{eval_stats['average_max_tile']:.2f}",
+                    f"{eval_stats['reach_2048_rate']:.6f}",
+                    *[f"{frequency:.6f}" for frequency in freqs],
+                    *[
+                        "" if last_diag_avg[name] is None
+                        else f"{last_diag_avg[name]:.6f}"
+                        for name in DIAG_NAMES
+                    ],
+                    int(is_best),
+                ]
+            )
+            eval_csv_file.flush()
+
             if verbose:
+                action_text = "/".join(f"{frequency * 100:.0f}%" for frequency in freqs)
+                diag_text = ""
+                if config.collect_diagnostics:
+                    diag_text = (
+                        f" q_mean={_fmt(last_diag_avg['q_mean'], 3)}"
+                        f" td_abs={_fmt(last_diag_avg['td_abs_mean'], 3)}"
+                        f" grad={_fmt(last_diag_avg['grad_norm'], 3)}"
+                    )
                 print(
                     f"  eval @ {env_steps}: avg_score={eval_stats['average_score']:.1f} "
                     f"avg_max_tile={eval_stats['average_max_tile']:.1f} "
-                    f"reach_2048={eval_stats['reach_2048_rate'] * 100:.1f}%"
+                    f"reach_2048={eval_stats['reach_2048_rate'] * 100:.1f}% "
+                    f"actions(U/R/D/L)={action_text}{diag_text}"
+                    + ("  (new best)" if is_best else "")
                 )
             agent.online.train()
 
@@ -235,6 +345,7 @@ def train(
 
     if csv_file is not None:
         csv_file.close()
+    eval_csv_file.close()
 
     elapsed = time.perf_counter() - start_time
     result = {
@@ -246,6 +357,10 @@ def train(
         "device": str(agent.device),
         "checkpoint_dir": str(checkpoint_dir),
         "final_checkpoint": str(final_path),
+        "eval_metrics_csv": str(eval_csv_path),
+        "best_checkpoint": str(best_path) if best_path is not None else None,
+        "best_eval_score": best_eval_score,
+        "best_eval_step": best_eval_step,
     }
     if verbose:
         print(
@@ -253,6 +368,11 @@ def train(
             f"updates={updates}, elapsed={elapsed:.2f}s, "
             f"final={final_path}"
         )
+        if best_path is not None:
+            print(
+                f"Best checkpoint: {best_path} "
+                f"(avg_score={best_eval_score:.1f} @ step {best_eval_step})"
+            )
     return result
 
 
@@ -269,6 +389,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--target-update-freq", type=int, default=None)
     parser.add_argument("--grad-clip-norm", type=float, default=None)
     parser.add_argument("--huber-beta", type=float, default=None)
+    parser.add_argument("--reward-scale", type=float, default=None)
+    parser.add_argument(
+        "--collect-diagnostics",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="log Q/target/TD/gradient/reward diagnostics (default: enabled)",
+    )
     parser.add_argument("--epsilon-start", type=float, default=None)
     parser.add_argument("--epsilon-end", type=float, default=None)
     parser.add_argument("--epsilon-decay-steps", type=int, default=None)
@@ -279,6 +406,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--log-frequency", type=int, default=None)
     parser.add_argument("--eval-frequency", type=int, default=None)
     parser.add_argument("--eval-episodes", type=int, default=None)
+    parser.add_argument("--eval-seed", type=int, default=None)
     parser.add_argument("--checkpoint-frequency", type=int, default=None)
     parser.add_argument("--checkpoint-dir", default=None)
     parser.add_argument("--max-episode-steps", type=int, default=None)

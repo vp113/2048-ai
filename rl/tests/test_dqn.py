@@ -8,6 +8,7 @@ import torch
 from torch import nn
 
 from rl.dqn.agent import DQNConfig, DoubleDQNAgent, double_dqn_targets
+from rl.dqn.evaluate import summarize_results
 from rl.dqn.network import LOG2_NORM, QNetwork, encode_board
 from rl.dqn.replay_buffer import ReplayBuffer
 
@@ -247,6 +248,68 @@ def test_train_step_updates_parameters_and_target():
         agent.online.parameters(), agent.target.parameters()
     ):
         assert torch.allclose(online_param, target_param)
+
+
+def test_train_step_diagnostics():
+    config = make_config(seed=1, batch_size=8, collect_diagnostics=True)
+    agent = DoubleDQNAgent(config)
+    buffer = ReplayBuffer(100, seed=1)
+    batch = _make_batch(buffer, 8)
+
+    loss = agent.train_step(batch)
+    metrics = agent.last_train_metrics
+    assert np.isfinite(loss)
+    assert set(metrics) == {
+        "q_mean", "q_abs_max", "target_mean", "td_abs_mean",
+        "grad_norm", "reward_mean",
+    }
+    for name, value in metrics.items():
+        assert np.isfinite(value), name
+    assert metrics["q_abs_max"] >= 0
+    assert metrics["td_abs_mean"] >= 0
+    assert metrics["grad_norm"] >= 0
+
+    agent.train_step(batch, collect_diagnostics=False)
+    assert agent.last_train_metrics == {}
+
+    # The global config flag also disables diagnostics.
+    agent_off = DoubleDQNAgent(
+        make_config(seed=2, batch_size=8, collect_diagnostics=False)
+    )
+    agent_off.train_step(batch)
+    assert agent_off.last_train_metrics == {}
+
+
+def test_reward_scale_affects_targets_but_not_raw_reward_metric():
+    agent_raw = DoubleDQNAgent(make_config(seed=5, batch_size=8, reward_scale=1.0))
+    agent_scaled = DoubleDQNAgent(make_config(seed=5, batch_size=8, reward_scale=0.1))
+
+    buffer = ReplayBuffer(100, seed=1)
+    batch = _make_batch(buffer, 8)
+
+    agent_raw.train_step(batch)
+    agent_scaled.train_step(batch)
+    raw_metrics = agent_raw.last_train_metrics
+    scaled_metrics = agent_scaled.last_train_metrics
+
+    # Diagnostics always report the raw (unscaled) reward mean.
+    assert raw_metrics["reward_mean"] == pytest.approx(scaled_metrics["reward_mean"])
+    # The Bellman target uses the scaled reward.
+    assert abs(raw_metrics["target_mean"] - scaled_metrics["target_mean"]) > 1e-6
+
+    # Default is the original raw-reward behaviour.
+    assert make_config().reward_scale == 1.0
+
+
+def test_evaluation_action_frequency_summary():
+    results = [
+        {"score": 10, "max_tile": 64, "steps": 5, "capped": False},
+    ]
+    stats = summarize_results(results, np.array([1, 2, 3, 4]))
+    assert stats["action_counts"] == [1, 2, 3, 4]
+    np.testing.assert_allclose(
+        stats["action_frequencies"], [0.1, 0.2, 0.3, 0.4]
+    )
 
 
 def test_checkpoint_roundtrip(tmp_path):
