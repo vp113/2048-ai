@@ -1,14 +1,9 @@
-# 基准运行产生的日志/采样文件（可随时重新生成）
-bench/*.txt
-bench/prof/
+# Local run/build artifacts
+*.log
 
-# Python 缓存与测试产物
-__pycache__/
-*.py[cod]
-.pytest_cache/
-
-# 强化学习训练产物
-rl/checkpoints/
-rl/logs/
-*.pt
-*.pth
+# Upstream 2048-ai build artifacts (if vendored/built locally)
+vendor/2048-ai/2048
+vendor/2048-ai/2048b
+vendor/2048-ai/*.o
+vendor/2048-ai/tuple_moves.*
+vendor/2048-ai/tables/
