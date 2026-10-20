@@ -35,6 +35,7 @@
   const speedValEl = document.getElementById('speed-val');
   const aiDecisionEl = document.getElementById('ai-decision');
   const aiNodesEl = document.getElementById('ai-nodes');
+  const aiHitsEl = document.getElementById('ai-hits');
   const aiStepsEl = document.getElementById('ai-steps');
   const aiScoreEl = document.getElementById('ai-score');
   const aiNoteEl = document.getElementById('ai-note');
@@ -313,9 +314,9 @@
 
   function setAINote() {
     if (useWorker) {
-      aiNoteEl.textContent = 'AI 在 Web Worker 中运行，搜索不阻塞页面交互。';
+      aiNoteEl.textContent = 'AI 在 Web Worker 中运行：Expectimax 搜索 + 置换表缓存，不阻塞页面交互。';
     } else {
-      aiNoteEl.textContent = '未启用 Worker（file:// 直接打开时浏览器会禁止），AI 在主线程以深度 ≤ 3 运行；通过本地服务器打开可获得完整深度与更流畅体验。';
+      aiNoteEl.textContent = '未启用 Worker（file:// 直接打开时浏览器会禁止），AI 在主线程以深度 ≤ 3 运行（已启用置换表缓存）；通过本地服务器打开可获得完整深度与更流畅体验。';
     }
   }
 
@@ -376,6 +377,7 @@
     requestDecision(grid, depth, (result) => {
       if (!aiRunning) return;
       aiNodesEl.textContent = formatNodes(result.nodes);
+      aiHitsEl.textContent = result.hitRate != null ? Math.round(result.hitRate * 100) + '%' : '—';
       if (result.direction) {
         aiDecisionEl.textContent = DIR_LABEL[result.direction];
         aiSteps++;
@@ -396,6 +398,7 @@
     aiStepsEl.textContent = '0';
     aiDecisionEl.textContent = '—';
     aiNodesEl.textContent = '0';
+    aiHitsEl.textContent = '—';
     aiToggleBtn.textContent = 'AI 暂停';
     aiToggleBtn.classList.add('active');
     aiTick();
@@ -419,6 +422,7 @@
     aiStepsEl.textContent = '0';
     aiDecisionEl.textContent = '—';
     aiNodesEl.textContent = '0';
+    aiHitsEl.textContent = '—';
     aiScoreEl.textContent = score;
   }
 

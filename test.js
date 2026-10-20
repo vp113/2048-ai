@@ -140,6 +140,7 @@ test('AI 快速移动与 game.js 移动结果一致（随机棋盘 × 4 方向�
       const actual = [ai.grid.slice(0, 4), ai.grid.slice(4, 8), ai.grid.slice(8, 12), ai.grid.slice(12, 16)];
       assert.deepStrictEqual(actual, expected, '棋盘不一致 dir=' + dir);
       assert.strictEqual(ai.score, gm.score, '得分不一致 dir=' + dir);
+      assert.strictEqual(ai.moved, gm.moved, '移动标志不一致 dir=' + dir);
     }
   }
 });
@@ -150,9 +151,14 @@ test('AI 深度1：合并两个 4 优于不合并的竖移', () => {
   assert.ok(['left', 'right'].includes(r.direction), '应选 left/right，实际 ' + r.direction);
 });
 
-test('AI 保持最大值在角落：[[32,0,0,2]] 选 left', () => {
-  const r = AI.chooseMoveFlat([32, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 1);
-  assert.strictEqual(r.direction, 'left');
+test('AI 保持最大值在角落：[[32,0,0,2]] 的走法不把 32 移出角落', () => {
+  const g = [32, 0, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const r = AI.chooseMoveFlat(g, 1);
+  // 左移或下移都能让 32 继续留在某个角落。
+  assert.ok(['left', 'down'].includes(r.direction), '意外方向: ' + r.direction);
+  const after = AI.moveFlat(g, r.direction).grid;
+  const pos = after.indexOf(32);
+  assert.ok([0, 3, 12, 15].includes(pos), '32 被移出角落，位置=' + pos);
 });
 
 test('AI 在游戏结束棋盘上返回 direction=null', () => {
@@ -178,6 +184,124 @@ test('heuristic：最大值在角落优于在中心', () => {
   const corner = [16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   const center = [0, 0, 0, 0, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   assert.ok(AI.heuristic(corner) > AI.heuristic(center));
+});
+
+// —— 优化后新增：单调性 ——
+test('lineMono：完全单调的线为 0（递增、递减都可以）', () => {
+  assert.strictEqual(AI.lineMono([1, 2, 3, 4]), 0);
+  assert.strictEqual(AI.lineMono([4, 3, 2, 1]), 0);
+});
+
+test('lineMono：混乱排列被惩罚（旧实现会误奖）', () => {
+  // [2,4,1,3] 的相邻变化为 +2,-3,+2：两个方向都必须付出代价。
+  assert.ok(AI.lineMono([2, 4, 1, 3]) < 0);
+  assert.ok(AI.lineMono([2, 4, 1, 3]) < AI.lineMono([1, 2, 3, 4]));
+});
+
+test('lineMono：空格被跳过，不当作数字 0 参与比较', () => {
+  // 跳过空格后 [1,2] 仍单调递增；若把空格当 0，会算成 1→0→2 的混乱排列。
+  assert.strictEqual(AI.lineMono([1, 0, 2, 0]), 0);
+  assert.strictEqual(AI.lineMono([0, 1, 0, 2]), 0);
+  // 跳过空格后为 [1,3,2]：+2,-1，两个方向都有反向代价 → -1。
+  assert.strictEqual(AI.lineMono([1, 0, 3, 2]), -1);
+});
+
+// —— 优化后新增：平滑度 ——
+test('lineSmooth：相邻差之和，跳过空格', () => {
+  assert.strictEqual(AI.lineSmooth([1, 2, 3, 4]), 3);
+  assert.strictEqual(AI.lineSmooth([2, 2, 2, 2]), 0);
+  // 旧实现把 0 当数字：|1-0|+|0-0|+|0-2| = 3；正确做法是只看非空相邻 → 1。
+  assert.strictEqual(AI.lineSmooth([1, 0, 0, 2]), 1);
+});
+
+// —— 优化后新增：随机节点概率 ——
+test('机会节点严格按 90% / 10% 加权', () => {
+  // 满盘前留一格；含 2,2 相邻对，落子后仍不是死局。
+  const base = [2, 2, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 0];
+  const g2 = base.slice(); g2[15] = 2;
+  const g4 = base.slice(); g4[15] = 4;
+  const expected = 0.9 * AI.heuristic(g2) + 0.1 * AI.heuristic(g4);
+  const got = AI.chanceValue(base, 0);
+  assert.ok(Math.abs(got - expected) < 1e-6, '期望值不符: got=' + got + ' expected=' + expected);
+
+  // 如果错误地当成 50/50，结果应当不同，说明权重确实生效。
+  const half = 0.5 * AI.heuristic(g2) + 0.5 * AI.heuristic(g4);
+  assert.ok(Math.abs(half - got) > 1e-6);
+});
+
+test('机会节点覆盖所有空格位置（而非只取第一个）', () => {
+  const base = [2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  // depth 0 时，应是对 15 个空位分别落 2/4 的期望；只要实现漏掉空格，结果就会偏离。
+  let expected = 0;
+  for (let i = 1; i < 16; i++) {
+    const a = base.slice(); a[i] = 2;
+    const b = base.slice(); b[i] = 4;
+    expected += (0.9 * AI.heuristic(a) + 0.1 * AI.heuristic(b)) / 15;
+  }
+  const got = AI.chanceValue(base, 0);
+  assert.ok(Math.abs(got - expected) < 1e-6);
+});
+
+// —— 优化后新增：置换表正确性 ——
+test('缓存与禁用缓存的结果完全一致（随机棋盘 × 深度 1-3）', () => {
+  let seed = 998244353;
+  const rand = () => {
+    seed = (seed * 1103515245 + 12345) & 0x7fffffff;
+    return seed / 0x7fffffff;
+  };
+  for (let iter = 0; iter < 12; iter++) {
+    const g = [];
+    for (let i = 0; i < 16; i++) {
+      g[i] = rand() < 0.3 ? 0 : (1 << (1 + Math.floor(rand() * 7)));
+    }
+    for (const depth of [1, 2, 3]) {
+      const cached = AI.chooseMoveFlat(g, depth);
+      const plain = AI.chooseMoveFlat(g, depth, { useCache: false });
+      assert.strictEqual(cached.direction, plain.direction, '方向不一致 d=' + depth);
+      assert.strictEqual(cached.value, plain.value, '评估值不一致 d=' + depth);
+      assert.ok(cached.nodes <= plain.nodes, '缓存不应增加访问节点');
+    }
+  }
+});
+
+test('置换表在中盘深度 3 有实际命中', () => {
+  const g = [2, 4, 8, 16, 32, 8, 4, 2, 0, 16, 0, 4, 2, 0, 32, 0];
+  const r = AI.chooseMoveFlat(g, 3);
+  assert.ok(r.hits > 0, '命中数应为正，实际 ' + r.hits);
+  assert.ok(r.hitRate > 0 && r.hitRate <= 1);
+});
+
+test('搜索不会修改传入的棋盘', () => {
+  const g = [2, 4, 8, 16, 32, 8, 4, 2, 0, 16, 0, 4, 2, 0, 32, 0];
+  const copy = g.slice();
+  AI.chooseMoveFlat(g, 3);
+  assert.deepStrictEqual(g, copy);
+});
+
+test('递归分支互不影响：重复搜索同一棋盘结果完全一致', () => {
+  const g = [2, 4, 8, 16, 32, 8, 4, 2, 0, 16, 0, 4, 2, 0, 32, 0];
+  const copy = g.slice();
+  const a = AI.chooseMoveFlat(g, 3);
+  const b = AI.chooseMoveFlat(g, 3);
+  assert.deepStrictEqual(g, copy, '输入棋盘被修改');
+  assert.strictEqual(a.direction, b.direction);
+  assert.strictEqual(a.value, b.value);
+  assert.strictEqual(a.nodes, b.nodes);
+});
+
+// —— 优化后新增：游戏结束评估 ——
+test('死亡棋盘启发式返回强负值，不会被角落奖励高估', () => {
+  const dead = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, 65536];
+  assert.strictEqual(AI.heuristic(dead), AI.TERMINAL);
+  assert.ok(AI.TERMINAL < -1e8);
+});
+
+test('满盘但存在相邻相等时仍会继续搜索合并走法', () => {
+  const full = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2, 4, 8, 16, 32, 32];
+  const b = Game.fromNumbers([full.slice(0, 4), full.slice(4, 8), full.slice(8, 12), full.slice(12, 16)]);
+  assert.strictEqual(Game.isGameOver(b), false);
+  const r = AI.chooseMoveFlat(full, 2);
+  assert.notStrictEqual(r.direction, null, '满盘可合并时不应判为无路可走');
 });
 
 // —— 运行 ——
