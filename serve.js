@@ -20,6 +20,7 @@ const STATIC_FILES = {
   '/index.html': 'index.html',
   '/style.css': 'style.css',
   '/game.js': 'game.js',
+  '/replay.js': 'replay.js',
   '/ai-client.js': 'ai-client.js',
   '/main.js': 'main.js',
 };

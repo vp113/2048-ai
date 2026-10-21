@@ -53,14 +53,58 @@ connection status; it does not silently fall back to a weaker AI.
   - pause finishes the current render and stops before the next step; resume
     continues the same game.
 - Current score, best score, current max tile, historical max tile.
-- Achievements at **32768** and **65536** (localStorage, toast notification).
-- Automatic next game after game over; one session is capped at **500 games**
-  and can be stopped at any time with pause.
+- **Game over keeps the final board**: AI movement stops immediately, the board
+  stays visible, and a banner shows final score, max tile, and move count.
+  **下一局** starts the next game manually.
+- **自动连续挑战** switch (default **off**). When enabled, the final board and
+  result stay for about **3.5 s** (at least 3 s), then the next game starts.
+  Pause during that wait cancels the automatic next game. One session is capped
+  at **500 games**.
+- Achievements at **32768** and **65536** (localStorage, toast notification,
+  and a persistent achievement label in the final banner).
+- **Replay import**: load a replay JSON, open directly at the final board, then
+  play/pause, step forward/back, jump to start/end, drag the progress slider,
+  change replay speed, or exit. The final board remains when playback reaches
+  the end.
 - Best-game replay record: initial board + every move + every spawned tile,
   saved in localStorage and downloadable from the footer. It is enough to
   replay and verify a record game.
-- All high scores come from real games; no rule, spawn probability, or starting
-  board modifications.
+- All high scores come from real games; replay viewing never updates the best
+  score/history and never requests the AI.
+- No rule, spawn probability, or starting board modifications.
+
+## Replay import and viewing
+
+Click **导入回放**, choose a JSON file downloaded by this project. The replay
+opens at the **last move** by default; use ◀ / ▶, start/end, the slider, or the
+play button to inspect any step. Replaying uses only the recorded moves and
+spawned tiles; it never re-randomizes tiles or calls the AI.
+
+Supported format (version 1):
+
+```json
+{
+  "version": 1,
+  "initial": [[2,0,0,0],[2,0,0,0],[0,0,0,0],[0,0,0,0]],
+  "moves": [[0, 12, 4], [1, 0, 2]],
+  "score": 12,
+  "maxTile": 8,
+  "finishedAt": "2026-10-21T00:00:00.000Z"
+}
+```
+
+- `direction`: `0=up, 1=right, 2=down, 3=left`
+- `spawnIndex`: row-major flat index `0..15` (or `-1`/`0` for a legacy no-spawn entry)
+- `spawnValue`: `2` or `4`
+
+The importer validates the initial board, every move, every spawn cell and
+value, and the final score/max. Invalid files show a clear message and leave
+the page usable. Import stops any live AI session, timers, and in-flight
+animation/request. The file is read-only; replay does not modify it.
+
+Replay seeking uses snapshots every 100 moves. For a 7,164-move replay this
+means 73 snapshots; a random seek applies at most 99 recorded moves and is
+fast enough for continuous slider dragging.
 
 ## Architecture
 
@@ -134,6 +178,15 @@ depth 3), four real games:
   - 62 moves produced exactly 62 spawned tiles;
   - after each settled step, DOM tile count/ids/values matched the logical
     board; no residual, duplicate, or pending animation state.
+  - game-over with auto-continue off kept the final board for >4 s and did not
+    advance the game count;
+  - auto-continue on kept the final board at 3 s and started the next game by
+    4.2 s; pausing during the wait prevented the automatic next game;
+  - a real **7,164-step / 171,828-point / 8192-tile** replay imported straight
+    to its final board; previous/start/middle/end seeks matched the recorded
+    score and board; slider drag, 20-step/s play, auto-pause at the end, fast
+    drag, and exit all worked; importing an invalid file showed a clear error
+    and left the page in normal mode.
 
 The benchmark is reproducible with:
 
@@ -149,12 +202,16 @@ node test.js
 
 The suite covers board rules, merge/score behaviour, spawn rules, game-over
 detection, AI board encoding (including `65536 -> G`), reply mapping, the
-static server/`/move` proxy, and replay-record reconstruction.
+static server/`/move` proxy, replay-record reconstruction, and replay JSON
+validation/seeking (first/middle/final states, invalid moves, occupied spawn
+cells, score/max mismatches, and read-only input). The browser checks above
+were run against a real Edge page via CDP.
 
 ## Files
 
 ```
 index.html / style.css / main.js / game.js   web game and AI controller
+replay.js                                    replay validation + snapshot seeking
 ai-client.js                                 board encoding + AI HTTP client
 serve.js                                     static server + AI proxy
 scripts/start.ps1 / stop-ai.ps1              one-command local startup/stop

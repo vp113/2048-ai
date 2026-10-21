@@ -31,6 +31,8 @@
       <div class="buttons">
         <button class="btn btn-ai" id="ai-toggle" type="button">AI 开始</button>
         <button class="btn" id="restart" type="button">重新开始</button>
+        <button class="btn" id="import-replay" type="button">导入回放</button>
+        <input type="file" id="replay-file" accept=".json,application/json" hidden>
       </div>
     </div>
 
@@ -43,13 +45,65 @@
         <button type="button" data-speed="12">12/秒</button>
         <button type="button" data-speed="20">20/秒</button>
       </div>
+      <label class="auto-toggle">
+        <input type="checkbox" id="auto-continue">
+        自动连续挑战
+      </label>
       <span class="session" id="session">第 1 局 · 已完成 0 局</span>
     </div>
+
+    <p class="import-note" id="import-note" hidden></p>
+
+    <section class="final-banner" id="final-banner" hidden aria-live="polite">
+      <div class="final-head">
+        <strong class="final-title">本局结束</strong>
+        <span class="final-achievement" id="final-achievement"></span>
+      </div>
+      <div class="final-stats">
+        <span>得分 <b id="final-score">0</b></span>
+        <span>最大方块 <b id="final-max">0</b></span>
+        <span>步数 <b id="final-moves">0</b></span>
+      </div>
+      <div class="final-actions">
+        <span class="final-note" id="final-note"></span>
+        <button class="btn btn-primary" id="next-game" type="button">下一局</button>
+      </div>
+    </section>
 
     <div class="board" id="board">
       <div class="cell-layer" id="cell-layer"></div>
       <div class="tile-layer" id="tile-layer"></div>
     </div>
+
+    <section class="replay-panel" id="replay-panel" hidden>
+      <div class="replay-head">
+        <strong>回放模式</strong>
+        <span class="replay-source" id="replay-source"></span>
+        <button class="btn btn-small" id="replay-exit" type="button">退出回放</button>
+      </div>
+      <div class="replay-scrub">
+        <button class="btn btn-small" id="replay-start" type="button" title="跳到开局">|◀</button>
+        <button class="btn btn-small" id="replay-prev" type="button" title="上一步">◀</button>
+        <button class="btn btn-small replay-play" id="replay-play" type="button">播放</button>
+        <button class="btn btn-small" id="replay-next" type="button" title="下一步">▶</button>
+        <button class="btn btn-small" id="replay-end" type="button" title="跳到结局">▶|</button>
+        <input type="range" id="replay-progress" min="0" max="0" value="0" step="1">
+        <span class="replay-counter" id="replay-counter">0 / 0</span>
+      </div>
+      <div class="replay-meta">
+        <span>得分 <b id="replay-score">0</b></span>
+        <span>最大方块 <b id="replay-max">0</b></span>
+        <label>速度
+          <select id="replay-speed">
+            <option value="2">2 步/秒</option>
+            <option value="5" selected>5 步/秒</option>
+            <option value="10">10 步/秒</option>
+            <option value="20">20 步/秒</option>
+          </select>
+        </label>
+      </div>
+      <p class="replay-note" id="replay-note">导入后默认显示最终棋盘；拖动进度条查看任意一步。</p>
+    </section>
 
     <div class="statusbar">
       <span class="status" id="ai-status">正在连接 AI 服务…</span>
@@ -67,17 +121,8 @@
 
   <div class="toast" id="toast" role="status"></div>
 
-  <div class="overlay" id="message">
-    <div class="overlay-card">
-      <h2 id="message-text">本局结束</h2>
-      <p class="sub" id="message-sub"></p>
-      <div class="buttons">
-        <button class="btn btn-primary" id="message-action" type="button">继续挑战</button>
-      </div>
-    </div>
-  </div>
-
   <script src="game.js"></script>
+  <script src="replay.js"></script>
   <script src="ai-client.js"></script>
   <script src="main.js"></script>
 </body>

@@ -1,15 +1,15 @@
 /*
  * 2048 AI showcase controller.
  *
- * One strictly serial step:
- *   request AI move -> apply move -> spawn exactly one tile -> finish render
- *   -> verify DOM -> wait for the selected step interval -> next step.
+ * Live mode: strictly serial AI steps.
+ * Replay mode: read-only snapshots of a JSON replay; it never requests the AI.
  */
 (function () {
   'use strict';
 
   const Game = window.Game2048;
   const AIClient = window.AI2048Client;
+  const Replay = window.Replay2048;
   const SIZE = Game.SIZE;
 
   const SPEEDS = {
@@ -21,6 +21,7 @@
   };
   const DEFAULT_SPEED = 8;
   const MAX_GAMES = 500;
+  const AUTO_NEXT_DELAY = 3500;
   const DIRS = ['up', 'right', 'down', 'left'];
   const DIR_INDEX = { up: 0, right: 1, down: 2, left: 3 };
 
@@ -44,10 +45,34 @@
   const achEl = $('achievements');
   const replayLink = $('replay-download');
   const toastEl = $('toast');
-  const overlayEl = $('message');
-  const msgText = $('message-text');
-  const msgSub = $('message-sub');
-  const msgAction = $('message-action');
+
+  const autoContinueEl = $('auto-continue');
+  const importBtn = $('import-replay');
+  const fileInput = $('replay-file');
+  const importNote = $('import-note');
+
+  const finalBanner = $('final-banner');
+  const finalScoreEl = $('final-score');
+  const finalMaxEl = $('final-max');
+  const finalMovesEl = $('final-moves');
+  const finalNoteEl = $('final-note');
+  const finalAchievementEl = $('final-achievement');
+  const nextGameBtn = $('next-game');
+
+  const replayPanel = $('replay-panel');
+  const replaySourceEl = $('replay-source');
+  const replayExitBtn = $('replay-exit');
+  const replayStartBtn = $('replay-start');
+  const replayPrevBtn = $('replay-prev');
+  const replayPlayBtn = $('replay-play');
+  const replayNextBtn = $('replay-next');
+  const replayEndBtn = $('replay-end');
+  const replayProgress = $('replay-progress');
+  const replayCounter = $('replay-counter');
+  const replayScoreEl = $('replay-score');
+  const replayMaxEl = $('replay-max');
+  const replaySpeedEl = $('replay-speed');
+  const replayNoteEl = $('replay-note');
 
   const ai = AIClient.createClient({ endpoint: '/move', timeoutMs: 60000 });
   const HEALTH_BOARD = [
@@ -67,6 +92,7 @@
   let hasStarted = false;
   let gameOver = true;
   let speed = DEFAULT_SPEED;
+  let autoContinue = false;
 
   let tileElements = {};
   let layout = { cell: 0, gap: 0, width: 0 };
@@ -77,6 +103,12 @@
   let pendingAnimation = null;
   let autoTimer = null;
   let toastTimer = null;
+
+  let replayMode = false;
+  let replayData = null;
+  let replayIndex = 0;
+  let replayPlaying = false;
+  let replayTimer = null;
 
   let aiReady = false;
   let aiChecking = false;
@@ -163,24 +195,15 @@
     statusEl.className = 'status' + (cls ? ' ' + cls : '');
   }
 
-  function showOverlay(title, sub, actionText) {
-    msgText.textContent = title;
-    msgSub.textContent = sub;
-    msgAction.textContent = actionText || '继续挑战';
-    overlayEl.classList.add('show');
-  }
-
-  function hideOverlay() {
-    overlayEl.classList.remove('show');
-  }
-
   function updateScores() {
     scoreEl.textContent = fmt(score);
-    bestEl.textContent = fmt(Math.max(best, score));
+    bestEl.textContent = fmt(replayMode ? best : Math.max(best, score));
     maxEl.textContent = fmt(currentMax);
-    sessionEl.textContent = gameOver
-      ? '已完成 ' + gamesPlayed + ' 局'
-      : '第 ' + (gamesPlayed + 1) + ' 局 · 已完成 ' + gamesPlayed + ' 局';
+    sessionEl.textContent = replayMode
+      ? '回放模式'
+      : (gameOver
+        ? '已完成 ' + gamesPlayed + ' 局'
+        : '第 ' + (gamesPlayed + 1) + ' 局 · 已完成 ' + gamesPlayed + ' 局');
 
     const badges = [];
     if (achievements['32768']) badges.push('32768 ✓');
@@ -212,6 +235,99 @@
     }
   }
 
+  function hideImportNote() {
+    importNote.hidden = true;
+    importNote.textContent = '';
+  }
+
+  function showImportError(message) {
+    importNote.textContent = '回放导入失败：' + message;
+    importNote.hidden = false;
+  }
+
+  // ------------------------------------------------------------------
+  // Final-state banner / auto-continue
+  // ------------------------------------------------------------------
+  function showFinalBanner() {
+    finalScoreEl.textContent = fmt(score);
+    finalMaxEl.textContent = fmt(currentMax);
+    finalMovesEl.textContent = fmt(record ? record.moves.length : 0);
+    const achieved = [];
+    if (currentMax >= 65536) achieved.push('65536');
+    if (currentMax >= 32768) achieved.push('32768');
+    finalAchievementEl.textContent = achieved.length ? '成就 ' + achieved.join(' / ') : '';
+    finalBanner.hidden = false;
+    updateFinalNote();
+  }
+
+  function hideFinalBanner() {
+    finalBanner.hidden = true;
+  }
+
+  function updateFinalNote() {
+    if (finalBanner.hidden) return;
+    if (gamesPlayed >= MAX_GAMES) {
+      finalNoteEl.textContent = '本次连续挑战已完成 ' + MAX_GAMES + ' 局。点击「下一局」重新开始挑战。';
+      return;
+    }
+    if (autoContinue && running && autoTimer) {
+      finalNoteEl.textContent = '约 3 秒后自动开始下一局；点击「AI 暂停」可取消。';
+    } else if (autoContinue && running) {
+      finalNoteEl.textContent = '准备开始下一局…';
+    } else if (autoContinue) {
+      finalNoteEl.textContent = '已暂停；点击「下一局」或「AI 开始」继续。';
+    } else {
+      finalNoteEl.textContent = '点击「下一局」继续；开启「自动连续挑战」可自动开始。';
+    }
+  }
+
+  function cancelAuto() {
+    if (autoTimer) {
+      clearTimeout(autoTimer);
+      autoTimer = null;
+    }
+  }
+
+  function scheduleAutoNext() {
+    cancelAuto();
+    if (replayMode || !autoContinue || !gameOver || !running || gamesPlayed >= MAX_GAMES) {
+      updateFinalNote();
+      return;
+    }
+    autoTimer = setTimeout(function () {
+      autoTimer = null;
+      if (!running || !autoContinue || replayMode || !gameOver) {
+        updateFinalNote();
+        return;
+      }
+      startNextGame();
+    }, AUTO_NEXT_DELAY);
+    updateFinalNote();
+  }
+
+  function startNextGame() {
+    if (replayMode) return;
+    cancelAuto();
+    stopLoop();
+    hideFinalBanner();
+    if (gamesPlayed >= MAX_GAMES) gamesPlayed = 0;
+    newGame();
+    startLoop();
+  }
+
+  function applyAutoContinue(value) {
+    autoContinue = !!value;
+    autoContinueEl.checked = autoContinue;
+    if (!autoContinue) {
+      cancelAuto();
+      if (gameOver && running && !replayMode) stopLoop();
+      updateFinalNote();
+      return;
+    }
+    if (gameOver && running && !replayMode) scheduleAutoNext();
+    else updateFinalNote();
+  }
+
   // ------------------------------------------------------------------
   // AI availability
   // ------------------------------------------------------------------
@@ -229,11 +345,11 @@
     try {
       await ai.requestMove(HEALTH_BOARD);
       aiReady = true;
-      setStatus('AI 已连接 · depth 3', 'ok');
+      if (!replayMode) setStatus('AI 已连接 · depth 3', 'ok');
       stopRetry();
     } catch (e) {
       aiReady = false;
-      setStatus('AI 服务未连接 · 请运行 scripts/start.ps1', 'err');
+      if (!replayMode) setStatus('AI 服务未连接 · 请运行 scripts/start.ps1', 'err');
       scheduleRetry();
     } finally {
       aiChecking = false;
@@ -418,15 +534,8 @@
   }
 
   // ------------------------------------------------------------------
-  // Game lifecycle
+  // Live game lifecycle
   // ------------------------------------------------------------------
-  function cancelAuto() {
-    if (autoTimer) {
-      clearTimeout(autoTimer);
-      autoTimer = null;
-    }
-  }
-
   function newGame() {
     finishPendingAnimation(false);
     cancelAuto();
@@ -443,8 +552,9 @@
     measure();
     buildBackground();
     renderBoard();
+    hideFinalBanner();
+    hideImportNote();
     updateScores();
-    hideOverlay();
   }
 
   function startLoop() {
@@ -475,15 +585,15 @@
   }
 
   function pauseAI() {
+    if (replayMode) return;
     const ended = gameOver;
     finishPendingAnimation(true);
     stopLoop();
-    if (ended) {
-      showOverlay('已暂停', '本局得分 ' + fmt(score) + '，最大方块 ' + fmt(currentMax) + '。', '继续挑战');
-    }
+    if (ended) updateFinalNote();
   }
 
   function toggleAI() {
+    if (replayMode) return;
     if (running) { pauseAI(); return; }
     if (!aiReady) {
       setStatus('正在连接 AI 服务…');
@@ -494,14 +604,16 @@
       if (gamesPlayed >= MAX_GAMES) gamesPlayed = 0;
       newGame();
     }
-    hideOverlay();
+    hideFinalBanner();
     startLoop();
   }
 
   function restart() {
+    if (replayMode) return;
     const wasRunning = running;
     finishPendingAnimation(false);
     stopLoop();
+    hideFinalBanner();
     newGame();
     if (wasRunning) startLoop();
     else updateButton();
@@ -525,7 +637,7 @@
   }
 
   function finishGame() {
-    if (gameOver) return;
+    if (gameOver || replayMode) return;
     gameOver = true;
 
     const previousBest = best;
@@ -539,38 +651,28 @@
     gamesPlayed += 1;
     updateScores();
     showToast('第 ' + gamesPlayed + ' 局结束 · ' + fmt(score) + ' 分 · 最大 ' + fmt(currentMax));
+    showFinalBanner();
 
     if (gamesPlayed >= MAX_GAMES) {
       stopLoop();
-      showOverlay(
-        '连续挑战完成',
-        '已完成 ' + gamesPlayed + ' 局，历史最高 ' + fmt(best) + ' 分，最大方块 ' + fmt(bestMax) + '。',
-        '继续挑战'
-      );
+      updateFinalNote();
       return;
     }
 
-    if (!running) {
-      showOverlay('本局结束', '得分 ' + fmt(score) + '，最大方块 ' + fmt(currentMax) + '。', '继续挑战');
+    if (autoContinue) {
+      scheduleAutoNext();
       updateButton();
       return;
     }
 
-    const delay = speed >= 12 ? 300 : 700;
-    autoTimer = setTimeout(function () {
-      autoTimer = null;
-      if (!running) return;
-      newGame();
-      startLoop();
-    }, delay);
+    stopLoop();
+    updateFinalNote();
   }
 
   async function applyMove(direction) {
     const result = Game.move(board, direction);
     if (!result.moved) return false;
 
-    // Apply the move first; spawning on the old board caused stale boards
-    // and a screen full of leftover "2" tiles.
     board = result.board;
 
     // Exactly one new tile per valid move (the initial board adds two).
@@ -638,6 +740,154 @@
   }
 
   // ------------------------------------------------------------------
+  // Replay mode
+  // ------------------------------------------------------------------
+  function clearReplayTimer() {
+    if (replayTimer) {
+      clearTimeout(replayTimer);
+      replayTimer = null;
+    }
+  }
+
+  function updateReplayUI() {
+    if (!replayMode || !replayData) return;
+    replayProgress.value = String(replayIndex);
+    replayCounter.textContent = fmt(replayIndex) + ' / ' + fmt(replayData.total);
+    replayScoreEl.textContent = fmt(score);
+    replayMaxEl.textContent = fmt(currentMax);
+    replayPlayBtn.textContent = replayPlaying ? '暂停' : '播放';
+  }
+
+  function seekReplay(index) {
+    if (!replayMode || !replayData) return;
+    try {
+      const state = Replay.stateAt(replayData, index, Game);
+      board = state.board;
+      score = state.score;
+      currentMax = state.maxTile;
+      replayIndex = state.index;
+      renderBoard();
+      verifyDom();
+      updateScores();
+      updateReplayUI();
+    } catch (error) {
+      pauseReplay();
+      replayNoteEl.textContent = '回放错误：' + error.message;
+      showToast('回放错误：' + error.message);
+    }
+  }
+
+  function pauseReplay() {
+    replayPlaying = false;
+    clearReplayTimer();
+    if (replayMode) {
+      if (replayData && replayIndex >= replayData.total) {
+        replayNoteEl.textContent = '已到达结局；可倒退或拖动进度条查看。';
+      } else {
+        replayNoteEl.textContent = '已暂停；拖动进度条查看任意一步。';
+      }
+      updateReplayUI();
+    }
+  }
+
+  function scheduleReplayTick() {
+    clearReplayTimer();
+    if (!replayMode || !replayPlaying) return;
+    const speedValue = Math.max(1, Number(replaySpeedEl.value) || 5);
+    replayTimer = setTimeout(function () {
+      replayTimer = null;
+      if (!replayMode || !replayPlaying) return;
+      if (replayIndex >= replayData.total) { pauseReplay(); return; }
+      seekReplay(replayIndex + 1);
+      if (replayIndex >= replayData.total) { pauseReplay(); return; }
+      scheduleReplayTick();
+    }, 1000 / speedValue);
+  }
+
+  function toggleReplayPlay() {
+    if (!replayMode || !replayData) return;
+    if (replayPlaying) { pauseReplay(); return; }
+    if (replayIndex >= replayData.total) seekReplay(0);
+    replayPlaying = true;
+    replayNoteEl.textContent = '正在播放；可随时拖动进度条查看任意一步。';
+    updateReplayUI();
+    scheduleReplayTick();
+  }
+
+  function enterReplay(replay, name) {
+    cancelAuto();
+    finishPendingAnimation(false);
+    stopLoop();
+    gameId += 1;
+    replayMode = true;
+    replayData = replay;
+    replayIndex = 0;
+    replayPlaying = false;
+    clearReplayTimer();
+    hideFinalBanner();
+    hideImportNote();
+    document.body.classList.add('replay-mode');
+    replayPanel.hidden = false;
+    replaySourceEl.textContent =
+      (name ? name + ' · ' : '') + fmt(replay.total) + ' 步 · 最终 ' +
+      fmt(replay.finalScore) + ' 分 · ' + fmt(replay.finalMax);
+    replayProgress.max = String(replay.total);
+    replaySpeedEl.value = '5';
+    replayNoteEl.textContent = '导入后默认显示最终棋盘；拖动进度条查看任意一步。';
+    stopRetry();
+    setStatus('回放模式');
+    updateButton();
+    seekReplay(replay.total);
+  }
+
+  function exitReplay() {
+    pauseReplay();
+    replayMode = false;
+    replayData = null;
+    replayIndex = 0;
+    clearReplayTimer();
+    document.body.classList.remove('replay-mode');
+    replayPanel.hidden = true;
+    hideImportNote();
+    newGame();
+    updateButton();
+    if (aiReady) {
+      setStatus('AI 已连接 · depth 3', 'ok');
+    } else {
+      setStatus('AI 服务未连接 · 请运行 scripts/start.ps1', 'err');
+      scheduleRetry();
+    }
+  }
+
+  async function handleReplayFile(file) {
+    if (!file) return;
+    hideImportNote();
+    if (replayMode) {
+      showImportError('请先退出当前回放');
+      fileInput.value = '';
+      return;
+    }
+    try {
+      if (file.size > 20 * 1024 * 1024) {
+        throw new Error('文件超过 20MB 限制');
+      }
+      const text = await file.text();
+      let data;
+      try {
+        data = JSON.parse(text);
+      } catch (error) {
+        throw new Error('JSON 解析失败：' + error.message);
+      }
+      const replay = Replay.buildReplay(data, Game);
+      enterReplay(replay, file.name);
+    } catch (error) {
+      showImportError(error && error.message ? error.message : String(error));
+    } finally {
+      fileInput.value = '';
+    }
+  }
+
+  // ------------------------------------------------------------------
   // Events
   // ------------------------------------------------------------------
   toggleBtn.addEventListener('click', toggleAI);
@@ -646,18 +896,47 @@
     const button = event.target.closest('button[data-speed]');
     if (button) setSpeed(button.getAttribute('data-speed'));
   });
-
-  msgAction.addEventListener('click', function () {
-    hideOverlay();
-    if (gamesPlayed >= MAX_GAMES) gamesPlayed = 0;
-    if (!aiReady) {
-      setStatus('正在连接 AI 服务…');
-      checkAI();
-      return;
-    }
-    if (gameOver) newGame();
-    startLoop();
+  autoContinueEl.addEventListener('change', function () {
+    applyAutoContinue(autoContinueEl.checked);
   });
+  nextGameBtn.addEventListener('click', startNextGame);
+
+  importBtn.addEventListener('click', function () {
+    if (replayMode) return;
+    fileInput.click();
+  });
+  fileInput.addEventListener('change', function () {
+    if (fileInput.files && fileInput.files[0]) {
+      handleReplayFile(fileInput.files[0]);
+    }
+  });
+
+  replayStartBtn.addEventListener('click', function () {
+    pauseReplay(); seekReplay(0);
+  });
+  replayPrevBtn.addEventListener('click', function () {
+    pauseReplay(); seekReplay(replayIndex - 1);
+  });
+  replayNextBtn.addEventListener('click', function () {
+    pauseReplay(); seekReplay(replayIndex + 1);
+  });
+  replayEndBtn.addEventListener('click', function () {
+    pauseReplay(); seekReplay(replayData ? replayData.total : 0);
+  });
+  replayPlayBtn.addEventListener('click', toggleReplayPlay);
+  replayProgress.addEventListener('input', function () {
+    // Read the user's target before pauseReplay() refreshes the slider.
+    const target = Number(replayProgress.value);
+    pauseReplay();
+    seekReplay(target);
+  });
+  replaySpeedEl.addEventListener('change', function () {
+    if (replayPlaying) {
+      clearReplayTimer();
+      scheduleReplayTick();
+    }
+  });
+  replayExitBtn.addEventListener('click', exitReplay);
 
   replayLink.addEventListener('click', function (event) {
     event.preventDefault();
@@ -675,6 +954,12 @@
   });
 
   window.addEventListener('resize', function () {
+    if (replayMode) {
+      measure();
+      buildBackground();
+      renderBoard();
+      return;
+    }
     if (running) pauseAI();
     finishPendingAnimation(true);
     measure();
@@ -682,7 +967,7 @@
     renderBoard();
   });
 
-  // Small read-only hook used by browser smoke tests.
+  // Read-only browser test hook.
   window.__2048Debug = {
     snapshot: function () {
       const boardIds = expectedBoardIds();
@@ -719,12 +1004,35 @@
         boardIds: boardIds,
         tileMapKeys: Object.keys(tileElements).length,
         gamesPlayed: gamesPlayed,
+        autoContinue: autoContinue,
+        finalVisible: !finalBanner.hidden,
+        replayMode: replayMode,
+        replayIndex: replayIndex,
+        replayTotal: replayData ? replayData.total : 0,
+        replayPlaying: replayPlaying,
       };
     },
     start: toggleAI,
     pause: pauseAI,
     setSpeed: setSpeed,
     verifyDom: verifyDom,
+    setAutoContinue: applyAutoContinue,
+    forceFinish: function () {
+      if (replayMode || gameOver) return;
+      finishPendingAnimation(true);
+      runId += 1;
+      loopActive = false;
+      finishGame();
+    },
+    importReplayData: function (data, name) {
+      const replay = Replay.buildReplay(data, Game);
+      enterReplay(replay, name || 'debug.json');
+    },
+    replaySeek: seekReplay,
+    replayPlay: toggleReplayPlay,
+    replayPause: pauseReplay,
+    exitReplay: exitReplay,
+    startNextGame: startNextGame,
   };
 
   // ------------------------------------------------------------------
@@ -732,6 +1040,8 @@
   // ------------------------------------------------------------------
   loadStore();
   setSpeed(DEFAULT_SPEED);
+  autoContinue = false;
+  autoContinueEl.checked = false;
   newGame();
   updateButton();
   checkAI();

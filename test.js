@@ -5,6 +5,7 @@ const http = require('node:http');
 
 const Game = require('./game.js');
 const AIClient = require('./ai-client.js');
+const Replay = require('./replay.js');
 const { createServer } = require('./serve.js');
 
 const board = (nums) => Game.fromNumbers(nums);
@@ -206,6 +207,10 @@ test('静态页面与 /move 代理', async () => {
     assert.ok(html.includes('<title>2048</title>'));
     assert.ok(html.includes('ai-client.js'));
 
+    const replayScript = await fetch(base + '/replay.js');
+    assert.strictEqual(replayScript.status, 200);
+    assert.ok((await replayScript.text()).includes('buildReplay'));
+
     const missing = await fetch(base + '/nope');
     assert.strictEqual(missing.status, 404);
   } finally {
@@ -240,6 +245,84 @@ test('回放记录：移动 + 指定的新方块可重建分数与最大方块',
   }
   assert.strictEqual(score, 4);
   assert.strictEqual(Game.maxValue(b), 4);
+});
+
+// ---------------------------------------------------------------------------
+// Replay validation and seeking
+// ---------------------------------------------------------------------------
+function sampleReplayData() {
+  return {
+    version: 1,
+    initial: [
+      [2, 0, 0, 0],
+      [2, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+    ],
+    moves: [
+      [0, 12, 4], // up, spawn at row 3 col 0
+      [1, 0, 2],  // right, spawn at row 0 col 0
+      [2, 0, 2],  // down, spawn at row 0 col 0
+    ],
+    score: 12,
+    maxTile: 8,
+    finishedAt: '2026-10-21T00:00:00.000Z',
+  };
+}
+
+test('回放：导入并准确给出开局/中间/结局棋盘与得分', () => {
+  const data = sampleReplayData();
+  const replay = Replay.buildReplay(data, Game);
+  assert.strictEqual(replay.total, 3);
+  assert.strictEqual(replay.finalScore, 12);
+  assert.strictEqual(replay.finalMax, 8);
+
+  const first = Replay.stateAt(replay, 0, Game);
+  eq(nums(first.board), data.initial);
+  assert.strictEqual(first.score, 0);
+  assert.strictEqual(first.maxTile, 2);
+
+  const one = Replay.stateAt(replay, 1, Game);
+  eq(nums(one.board), [[4, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [4, 0, 0, 0]]);
+  assert.strictEqual(one.score, 4);
+  assert.strictEqual(one.maxTile, 4);
+
+  const middle = Replay.stateAt(replay, 2, Game);
+  eq(nums(middle.board), [[2, 0, 0, 4], [0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 4]]);
+  assert.strictEqual(middle.score, 4);
+  assert.strictEqual(middle.maxTile, 4);
+
+  const last = Replay.stateAt(replay, 3, Game);
+  eq(nums(last.board), [[2, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0], [2, 0, 0, 8]]);
+  assert.strictEqual(last.score, 12);
+  assert.strictEqual(last.maxTile, 8);
+
+  // Out-of-range seeks clamp.
+  assert.strictEqual(Replay.stateAt(replay, 999, Game).index, 3);
+  assert.strictEqual(Replay.stateAt(replay, -5, Game).index, 0);
+});
+
+test('回放：读取不修改原始 JSON 记录', () => {
+  const data = sampleReplayData();
+  const before = JSON.stringify(data);
+  const replay = Replay.buildReplay(data, Game);
+  Replay.stateAt(replay, 2, Game);
+  Replay.stateAt(replay, 3, Game);
+  assert.strictEqual(JSON.stringify(data), before);
+});
+
+test('回放：拒绝错误格式、非法移动、占用生成位置与成绩不一致', () => {
+  const base = sampleReplayData();
+
+  assert.throws(() => Replay.buildReplay({ ...base, version: 2 }, Game), /版本/);
+  assert.throws(() => Replay.buildReplay({ ...base, initial: [[2]] }, Game), /initial/);
+  assert.throws(() => Replay.buildReplay({ ...base, moves: [[4, 0, 2]] }, Game), /方向/);
+  assert.throws(() => Replay.buildReplay({ ...base, moves: [[0, 16, 2]] }, Game), /位置/);
+  assert.throws(() => Replay.buildReplay({ ...base, moves: [[0, 12, 3]] }, Game), /数值/);
+  assert.throws(() => Replay.buildReplay({ ...base, moves: [[3, 0, 2]] }, Game), /移动无效/);
+  assert.throws(() => Replay.buildReplay({ ...base, moves: [[0, 0, 2]] }, Game), /已有方块/);
+  assert.throws(() => Replay.buildReplay({ ...base, score: 999 }, Game), /分数不一致/);
+  assert.throws(() => Replay.buildReplay({ ...base, maxTile: 999 }, Game), /最大方块/);
 });
 
 // ---------------------------------------------------------------------------
