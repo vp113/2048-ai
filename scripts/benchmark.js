@@ -5,4 +5,6 @@
 //   node scripts/benchmark.js --games 10
 //   node scripts/ai-benchmark.js --games 10
 
-require('./ai-benchmark.js');
+const benchmark = require('./ai-benchmark.js');
+
+benchmark.run();

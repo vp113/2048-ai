@@ -65,7 +65,9 @@ function mean(values) {
   return values.length ? values.reduce((a, b) => a + b, 0) / values.length : 0;
 }
 
-async function playGame(client, index, seed, maxMoves) {
+async function playGame(client, index, seed, maxMoves, options) {
+  const opts = options || {};
+  const shouldStop = typeof opts.shouldStop === 'function' ? opts.shouldStop : null;
   const rng = mulberry32(seed);
   let board = Game.createEmptyBoard();
   Game.addRandomTile(board, rng);
@@ -77,13 +79,16 @@ async function playGame(client, index, seed, maxMoves) {
   let steps = 0;
   let ended = false;
   let truncated = false;
+  let aborted = false;
   const started = performance.now();
 
   while (true) {
+    if (shouldStop && shouldStop()) { aborted = true; break; }
     if (Game.isGameOver(board)) { ended = true; break; }
     if (steps >= maxMoves) { truncated = true; break; }
 
     const move = await client.requestMove(board);
+    if (shouldStop && shouldStop()) { aborted = true; break; }
     if (move === null) {
       if (!Game.isGameOver(board)) {
         throw new Error('AI returned game-over (g), but the local board is not over');
@@ -106,10 +111,14 @@ async function playGame(client, index, seed, maxMoves) {
       spawn.tile ? spawn.tile.value : 0,
     ]);
     steps += 1;
+    if (typeof opts.onStep === 'function') {
+      opts.onStep({ steps: steps, score: score, maxTile: Game.maxValue(board) });
+    }
   }
 
   const elapsed = (performance.now() - started) / 1000;
   const finalMax = Game.maxValue(board);
+  const finalBoard = Game.toNumbers(board);
   const stats = {
     game: index + 1,
     seed: seed,
@@ -121,6 +130,7 @@ async function playGame(client, index, seed, maxMoves) {
     ended: ended,
     truncated: truncated,
   };
+  if (aborted) stats.aborted = true;
   const replay = {
     version: 1,
     initial: initial,
@@ -133,16 +143,17 @@ async function playGame(client, index, seed, maxMoves) {
     truncated: truncated,
     finishedAt: new Date().toISOString(),
   };
-  return { stats: stats, replay: replay };
+  return { stats: stats, replay: replay, finalBoard: finalBoard };
 }
 
-function saveReplay(replay, gameNumber, seed) {
-  fs.mkdirSync(REPLAY_DIR, { recursive: true });
+function saveReplay(replay, gameNumber, seed, directory) {
+  const replayDir = directory || REPLAY_DIR;
+  fs.mkdirSync(replayDir, { recursive: true });
   const stem = 'game-' + String(gameNumber).padStart(3, '0') + '-seed-' + seed;
   const payload = JSON.stringify(replay); // compact JSON keeps large replays small
   let suffix = 0;
   while (true) {
-    const file = path.join(REPLAY_DIR, stem + (suffix ? '-' + suffix : '') + '.json');
+    const file = path.join(replayDir, stem + (suffix ? '-' + suffix : '') + '.json');
     let fd;
     try {
       // "wx" creates exclusively: concurrent runs can never overwrite a replay.
@@ -301,7 +312,26 @@ async function main() {
     ' (' + games.length + ' replay' + (games.length === 1 ? '' : 's') + ' from this run)');
 }
 
-main().catch((error) => {
-  console.error('AI BENCHMARK FAILED:', error.message);
-  process.exit(1);
-});
+function run() {
+  return main().catch((error) => {
+    console.error('AI BENCHMARK FAILED:', error.message);
+    process.exit(1);
+  });
+}
+
+if (require.main === module) run();
+
+module.exports = {
+  arg: arg,
+  intArg: intArg,
+  timestamp: timestamp,
+  mulberry32: mulberry32,
+  playGame: playGame,
+  saveReplay: saveReplay,
+  summarize: summarize,
+  displayPath: displayPath,
+  REPLAY_DIR: REPLAY_DIR,
+  DIR_INDEX: DIR_INDEX,
+  main: main,
+  run: run,
+};

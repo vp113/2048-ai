@@ -6,6 +6,7 @@ const http = require('node:http');
 const Game = require('./game.js');
 const AIClient = require('./ai-client.js');
 const Replay = require('./replay.js');
+const Benchmark = require('./scripts/ai-benchmark.js');
 const { createServer } = require('./serve.js');
 
 const board = (nums) => Game.fromNumbers(nums);
@@ -309,6 +310,35 @@ test('回放：读取不修改原始 JSON 记录', () => {
   Replay.stateAt(replay, 2, Game);
   Replay.stateAt(replay, 3, Game);
   assert.strictEqual(JSON.stringify(data), before);
+});
+
+test('后台基准：可中途停止，且最终棋盘与回放重建一致', async () => {
+  let stop = false;
+  let calls = 0;
+  const client = {
+    requestMove: async (b) => {
+      calls += 1;
+      for (const direction of DIRS) {
+        if (Game.move(b, direction).moved) return direction;
+      }
+      return null;
+    },
+  };
+  const result = await Benchmark.playGame(client, 3, 42, 100, {
+    shouldStop: () => stop,
+    onStep: () => { stop = true; },
+  });
+  assert.strictEqual(calls, 1);
+  assert.strictEqual(result.stats.steps, 1);
+  assert.strictEqual(result.stats.aborted, true);
+  assert.strictEqual(result.replay.moves.length, 1);
+
+  const built = Replay.buildReplay(result.replay, Game);
+  const final = Replay.stateAt(built, built.total, Game);
+  assert.strictEqual(built.finalScore, result.stats.score);
+  assert.strictEqual(built.finalMax, result.stats.maxTile);
+  assert.strictEqual(built.total, result.stats.steps);
+  eq(Game.toNumbers(final.board), result.finalBoard);
 });
 
 test('回放：拒绝错误格式、非法移动、占用生成位置与成绩不一致', () => {
