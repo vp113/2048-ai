@@ -25,6 +25,8 @@ Docker 容器 2048-ai（C++ Expectimax，-d3，Tuple10/Tuple11 查找表）
 - 实时 AI 模式是严格串行的：请求一步 → 应用移动 → 恰好生成一个新方块 →
   完成动画/DOM 校验 → 等待下一 tick。
 - 后台基准不启动浏览器，复用同一套 `game.js` 规则和 `/move` 接口。
+- 65536 挑战同样后台运行，复用基准的 `playGame`/回放写入；达到目标后仍继续到
+  自然 Game Over，成功时只保留该局回放和状态/统计报告。
 - 回放导入只重放记录，不重新随机、不调用 AI；打开时默认停在最终棋盘。
 
 ## 关键文件
@@ -37,6 +39,7 @@ Docker 容器 2048-ai（C++ Expectimax，-d3，Tuple10/Tuple11 查找表）
 | `replay.js` | 回放 v1 校验、重建、每 100 步快照与 `stateAt` 跳转 |
 | `serve.js` | 无依赖静态服务器（精确白名单）与 `/move` 代理 |
 | `scripts/ai-benchmark.js` | 后台批量对局、JSON/CSV 报告、每局完整回放导出 |
+| `scripts/challenge-65536.js` | 可恢复的 65536 后台挑战；并行、成功回放、状态报告 |
 | `scripts/browser-test.js` | 默认 Headless Edge + CDP 冒烟/回放测试 |
 | `scripts/test-all.js` | 单元测试，然后 Headless Edge 测试 |
 | `scripts/start.ps1` / `stop-ai.ps1` | 本地 Docker/页面服务启动与停止 |
@@ -67,11 +70,21 @@ node scripts/browser-test.js --replay=reports/replays/game-001-seed-1.json
 node scripts/ai-benchmark.js
 node scripts/ai-benchmark.js --games 10 --seed 7
 node scripts/ai-benchmark.js --games 500 --out reports/run-500
+
+# 65536 后台挑战（默认无限；Ctrl+C 保存进度）
+node scripts/challenge-65536.js
+node scripts/challenge-65536.js --seed 7 --concurrency 2
+# 状态默认 reports/challenge-65536/state.json；重跑同命令即恢复，
+# 新挑战使用新的 --state。开发验收必须加 --max-games，示例：
+node scripts/challenge-65536.js --state reports/challenge-65536/test.json \
+  --max-games 4 --target-tile 2048
 ```
 
-- `scripts/browser-test.js` 与 AI 基准都需要 `http://127.0.0.1:8080/move` 可用。
+- `scripts/browser-test.js` 与 AI 基准/挑战都需要 `http://127.0.0.1:8080/move` 可用。
 - 浏览器测试默认使用 Headless Edge，只有显式 `--visible` 才创建可见窗口。
-- `reports/`（包括 `reports/replays/`）被 Git 忽略；不要提交。
+- 挑战默认并发 2，安全上限 4；不要在开发验收中启动默认无限挑战。
+- `reports/`（包括 `reports/replays/` 与 `reports/challenge-65536/`）被 Git 忽略；
+  不要提交。
 - 回放导出格式和实际用法见 `docs/ARCHITECTURE.md`，功能状态见 `docs/PROJECT_STATUS.md`。
 
 ## 必须遵守的项目约束
@@ -84,6 +97,8 @@ node scripts/ai-benchmark.js --games 500 --out reports/run-500
 3. **测试默认后台**：不打开/切换可见 Edge，不抢占焦点，不自动打开外部浏览器；
    只有用户显式要求或 `--visible` 才可视化。
 4. **不要自动发起大规模长跑**：基准默认 1 局；10/100/500 局必须由用户指定。
+   65536 挑战开发验收必须用 `--max-games` 限局，必要时用 `--target-tile` 降低目标；
+   不要启动默认的无限挑战。
 5. **保持回放兼容**：网页导入器使用 version 1 格式。修改字段、方向或生成位置语义时，
    必须同步更新 `replay.js`、`test.js`、回放 UI 和 Headless 测试。
 6. **优先修复根因**：不做无关重构，不为性能牺牲正确性，不改变视觉风格。
@@ -103,4 +118,6 @@ node scripts/ai-benchmark.js --games 500 --out reports/run-500
   `--replay=PATH` 验证真实回放。
 - 基准或回放导出改动：至少跑 1 局，检查报告、回放路径，并用 `replay.js` 或
   Headless Edge 验证最终棋盘/分数一致。
+- 65536 挑战改动：用 `--max-games` 跑有限局，验证并发、恢复、目标+自然结束判定，
+  以及成功回放的最终棋盘/得分/步数一致；不得用真实无限挑战做验收。
 - 工作区干净，提交信息说明用户可见行为与验证结果。

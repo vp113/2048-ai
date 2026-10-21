@@ -266,6 +266,48 @@ Example verified small run (`--games 3 --seed 1`): 3/3 games completed, average
 558,009 points, all reached 32768, 626 moves/s. This is a 3-game sample, not a
 statistical claim.
 
+## 65536 background challenge
+
+Repeatedly plays seeded games through the local AI until one game reaches
+**65536 and then ends naturally**. Reaching 65536 does not stop that game; it
+must continue to Game Over.
+
+```powershell
+# Start a new challenge (default target: 65536, concurrency: 2)
+node scripts/challenge-65536.js
+
+# Resume the same challenge (same state path)
+node scripts/challenge-65536.js
+
+# Start a separate challenge / different seed
+node scripts/challenge-65536.js --state reports/challenge-65536/run-2.json --seed 7
+```
+
+- Default concurrency is **2** (safe for the thread-per-connection C++ server);
+  `--concurrency` allows 1–4. `--seed` starts a different seed sequence.
+- Progress and the resumable checkpoint/report are kept in
+  `reports/challenge-65536/state.json` (or `--state PATH`). It is updated after
+  every completed game; completed indices/seeds are skipped on resume.
+- Each completed game prints a short line. Reaching the target also prints a
+  “continuing until natural game over” line.
+- **Ctrl+C** saves the checkpoint and exits; rerun the same command to resume.
+  In-flight games are not counted as completed and are retried.
+- On success, the challenge verifies the final board/score/max/steps, saves one
+  complete version-1 replay next to the state file, prints score, max tile,
+  steps, seed, total attempts, and the replay path, then stops other games.
+- Games that do not reach the target keep only compact statistics in the state
+  report; they do not create replay files. No existing replay or report is
+  deleted.
+- **Testing/sampling flags:** `--max-games N` bounds the number of completed
+  games (`0` = unlimited), and `--target-tile N` lowers the target to exercise
+  the success path quickly. The default target remains 65536.
+- Open the printed replay with **导入回放** in the page. It opens at the final
+  board and supports full playback.
+
+`scripts/challenge-65536.js` reuses `scripts/ai-benchmark.js` and `game.js`;
+the AI algorithm, Docker configuration, and web UI are unchanged. It is not
+started by `test-all.js`; use `--max-games` for bounded acceptance runs.
+
 ## Tests
 
 ```bash
@@ -276,6 +318,8 @@ node scripts/test-all.js
 
 The browser test above uses Headless Edge by default; no visible browser
 window is created. All browser checks described earlier were also run via CDP.
+The unit suite also covers the benchmark's abortable game loop and replay
+final-board reconstruction.
 
 ## Files
 
@@ -286,6 +330,7 @@ ai-client.js                                 board encoding + AI HTTP client
 serve.js                                     static server + AI proxy
 scripts/start.ps1 / stop-ai.ps1              one-command local startup/stop
 scripts/ai-benchmark.js                      headless batch AI benchmark + JSON/CSV + replays
+scripts/challenge-65536.js                   resumable background 65536 challenge
 scripts/benchmark.js                         compatibility wrapper for ai-benchmark.js
 scripts/browser-test.js                      Headless Edge smoke test (no visible window)
 scripts/test-all.js                          unit tests + Headless Edge

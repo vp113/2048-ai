@@ -29,11 +29,12 @@
 └────────────────────────────────────────────────────────────┘
 ```
 
-另有两条脱离浏览器的路径：
+另有几条脱离浏览器的路径：
 
 ```text
 scripts/browser-test.js ── Headless Edge + CDP ── 真实页面
 scripts/ai-benchmark.js ── Node + game.js + AI HTTP ── 报告/回放
+scripts/challenge-65536.js ── 复用基准循环 ── 状态报告 + 成功回放
 ```
 
 ## 2. 游戏规则与网页界面
@@ -226,9 +227,94 @@ node scripts/browser-test.js --replay=reports/replays/game-001-seed-1.json
 
 然后在页面点击 **导入回放** 选择该 JSON 即可；默认直接打开最终棋盘并支持完整回放。
 
-## 7. 回放格式与查看器
+## 7. 65536 自动挑战
 
-### 7.1 Version 1 格式
+`scripts/challenge-65536.js` 复用 `ai-benchmark.js` 的 `playGame`、`saveReplay`、
+`summarize`，以及同一套 `game.js` 规则和本地 `/move` 服务。它不启动浏览器。
+
+### 7.1 调度、种子与并发
+
+- 默认目标为 **65536**；第 `i` 局种子为 `baseSeed + i * 7919`。
+- 默认并发 **2**；`--concurrency` 可设 1–4，超过 4 会被截到 4 并警告。
+- 上游 HTTP 服务在 `RunServer` 中为每个连接创建 detached `std::thread`，监听
+  backlog 为 10，因此支持并发请求。当前 Docker 容器没有额外 CPU/内存限额，但
+  Tuple 查找表由请求线程共享，默认仍采用保守并发，避免 CPU/内存带宽竞争和潜在的
+  惰性查表写入竞争。
+- 已做小规模并发检查：16 个并发 `/move` 请求全部返回有效动作；2 局完整游戏并行
+  运行无错误。挑战仍建议默认 2，不建议盲目提高。
+- 状态文件记录已完成局的 `index`（种子由 index 推导），恢复时跳过这些 index，
+  从最小未完成 index 继续。
+- `--max-games N` 仅用于测试/采样：按已完成局数封顶；`0` 表示默认的无限挑战。
+
+### 7.2 成功条件与验证
+
+一局必须同时满足以下条件才算成功：
+
+1. 棋盘曾达到目标方块（最终 `maxTile >= targetTile`；方块只增不减）；
+2. 该局自然 `Game Over`（`ended === true`）。
+
+因此，达到 65536 不会结束当前局；脚本继续请求 AI、移动、生成，直到自然结束。
+若因 `--max-moves` 截断，即使已经达到目标也**不算成功**，不会保存回放。
+
+成功后，脚本用 `replay.js` 重建整局：
+
+- `Replay.buildReplay` 校验回放格式、移动和最终分数/最大方块；
+- `Replay.stateAt(replay, total)` 重建最终棋盘；
+- 与 `playGame` 记录的实际最终棋盘、得分、最大方块、步数逐项比较；
+- 全部一致后才写入回放并标记成功。
+
+### 7.3 状态/统计报告与恢复
+
+默认状态/报告路径：
+
+```text
+reports/challenge-65536/state.json
+```
+
+可用 `--state PATH` 指定；回放写在同一个目录。状态文件在每局完成后原子写入
+（临时文件 + rename），主要字段：
+
+- `version: 1`、`createdAt`、`updatedAt`、`status`
+- `config`: seed、concurrency、maxMoves、maxGames、targetTile、endpoint
+- `attempted`: 已启动的局数（含因成功而被中止的并行局）
+- `games[]`: 每局简要记录（index、seed、score、maxTile、steps、seconds、
+  ended、truncated、reachedTarget），**不包含 moves 或最终棋盘**
+- `summary`: 平均/最佳分数、最大方块分布、成就率、总步数/时间
+- `success`: 成功时的 index、seed、score、maxTile、steps、finalBoard、
+  `replayFile`、验证时间
+
+恢复行为：
+
+- 重跑相同命令会读取已有状态，跳过已完成的 index；配置中的 seed、maxMoves、
+  targetTile 必须一致，否则要求使用新的 `--state`。
+- 并发数和 `--max-games` 可以在恢复时调整；后者可用于先跑小批量、再继续。
+- `Ctrl+C` 会设置 `interrupted` 并写入状态；正在请求中的局不记为完成，恢复时重试。
+- 状态已是 `success` 时再次运行只打印成功摘要，不启动新局。
+
+### 7.4 产物与清理
+
+- **非成功局不写任何回放文件**，只在状态报告中保留简要统计。
+- 成功局通过 `saveReplay` 写入状态目录；`wx` 独占创建，同名自动加 `-1`、`-2`，
+  不覆盖已有文件。
+- 代码不删除任何既有回放或报告；因为非成功局没有临时回放，成功时无需额外清理，
+  最终目录只包含状态/统计报告和成功回放（以及用户此前已有的文件）。
+- 成功后停止调度其他局；已发出的请求最多等 3 秒，然后进程退出。
+
+### 7.5 常用选项
+
+```powershell
+node scripts/challenge-65536.js
+node scripts/challenge-65536.js --seed 7 --concurrency 2
+node scripts/challenge-65536.js --state reports/challenge-65536/run-2.json
+node scripts/challenge-65536.js --state reports/challenge-65536/test.json `
+  --max-games 4 --target-tile 2048
+```
+
+`--target-tile` 只用于测试降低目标，默认必须保持 65536。
+
+## 8. 回放格式与查看器
+
+### 8.1 Version 1 格式
 
 ```json
 {
@@ -245,10 +331,10 @@ node scripts/browser-test.js --replay=reports/replays/game-001-seed-1.json
 - `spawnIndex`：行优先 `0..15`；兼容旧记录的 `-1`（表示无生成，值必须为 0）。
 - `spawnValue`：2 或 4。
 - `score` / `maxTile`：最终值；导入时用于一致性校验。
-- 基准导出还会附加 `seed`、`game`、`ended`、`truncated`；查看器只读取标准字段，
+- 基准/挑战导出还会附加 `seed`、`game`、`ended`、`truncated`；查看器只读取标准字段，
   附加字段不影响导入。
 
-### 7.2 校验与跳转
+### 8.2 校验与跳转
 
 `replay.js`：
 
@@ -266,13 +352,13 @@ node scripts/browser-test.js --replay=reports/replays/game-001-seed-1.json
 3. 进入只读回放模式，默认 `seekReplay(total)` 显示最终棋盘；
 4. 播放/拖动只调用 `stateAt`，不调用 AI、不随机生成、不更新最高分。
 
-### 7.3 浏览器内的最佳回放
+### 8.3 浏览器内的最佳回放
 
 实时游戏会维护当前局的 `initial + moves`。如果本局刷新最高分或历史最大方块，
 `finishGame` 把 version 1 回放写入 localStorage；页脚提供下载。该记录与后台基准
 导出的回放格式相同，但两者存储位置不同。
 
-## 8. 持久化与产物
+## 9. 持久化与产物
 
 浏览器 localStorage：
 
@@ -288,22 +374,27 @@ node scripts/browser-test.js --replay=reports/replays/game-001-seed-1.json
 | 路径 | 说明 |
 |------|------|
 | `reports/ai-benchmark-*.json` / `.csv` | 后台统计报告，Git 忽略 |
-| `reports/replays/*.json` | 每局回放，Git 忽略 |
+| `reports/replays/*.json` | 基准每局回放，Git 忽略 |
+| `reports/challenge-65536/state.json` | 挑战状态/统计报告，默认路径，Git 忽略 |
+| `reports/challenge-65536/game-*.json` | 挑战成功回放，Git 忽略 |
 | `vendor/2048-ai/tables/` | 约 2.5 GB 查找表，Git 忽略 |
 | `*.log`（忽略规则） | 本地日志，不提交 |
 
 没有数据库、账号系统或云端持久化。
 
-## 9. 测试边界
+## 10. 测试边界
 
-- `test.js`：规则、生成/结束、AI 编码与客户端、静态服务器/代理、回放校验与跳转。
+- `test.js`：规则、生成/结束、AI 编码与客户端、静态服务器/代理、回放校验与跳转，
+  以及 `playGame` 的中止/最终棋盘一致性。
 - `scripts/browser-test.js`：使用 Headless Edge + CDP，启动进程内页面服务，验证
   串行 AI、DOM/棋盘一致、最终棋盘保留、自动连续关闭状态；`--replay=PATH` 额外验证
   回放最终状态和多个 seek 点。
 - `scripts/test-all.js`：先跑单元测试，成功后跑 Headless 浏览器测试。
-- 浏览器测试和基准都要求 AI 服务可用；单元测试不要求 Docker。
+- `scripts/challenge-65536.js` 需要 AI 服务；它不在 `test-all.js` 中自动启动无限
+  挑战。验收使用 `--max-games`，必要时配 `--target-tile`。
+- 浏览器测试、基准和挑战都要求 AI 服务可用；单元测试不要求 Docker。
 
-## 10. 边界与安全假设
+## 11. 边界与安全假设
 
 - 这是本地工具，不提供认证；不要把 8000/8080 端口直接暴露到不可信网络。
 - 页面服务器只提供白名单文件，不提供任意路径访问。
