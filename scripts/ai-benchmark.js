@@ -9,8 +9,9 @@
  *   node scripts/ai-benchmark.js --games 100 --seed 7
  *   node scripts/ai-benchmark.js --games 500 --out reports/run-500
  *
- * Reports are written as JSON and CSV under reports/ by default. The default
- * is ONE game: large runs are never started automatically.
+ * Reports are written as JSON and CSV under reports/ by default. Every game
+ * also writes a web-compatible version-1 replay to reports/replays/. The
+ * default is ONE game: large runs are never started automatically.
  */
 
 const fs = require('node:fs');
@@ -19,6 +20,12 @@ const Game = require('../game.js');
 const AIClient = require('../ai-client.js');
 
 const THRESHOLDS = [2048, 4096, 8192, 16384, 32768, 65536];
+const DIR_INDEX = { up: 0, right: 1, down: 2, left: 3 };
+const REPLAY_DIR = path.resolve('reports', 'replays');
+
+function displayPath(file) {
+  return path.relative(process.cwd(), file).split(path.sep).join('/');
+}
 
 function arg(name, fallback) {
   const prefix = '--' + name + '=';
@@ -64,6 +71,8 @@ async function playGame(client, index, seed, maxMoves) {
   Game.addRandomTile(board, rng);
   Game.addRandomTile(board, rng);
 
+  const initial = Game.toNumbers(board);
+  const moves = [];
   let score = 0;
   let steps = 0;
   let ended = false;
@@ -89,22 +98,64 @@ async function playGame(client, index, seed, maxMoves) {
     }
     score += result.score;
     board = result.board;
-    Game.addRandomTile(board, rng); // exactly one spawn per valid move
+
+    const spawn = Game.addRandomTile(board, rng); // exactly one spawn per valid move
+    moves.push([
+      DIR_INDEX[move],
+      spawn.tile ? spawn.cell.r * 4 + spawn.cell.c : -1,
+      spawn.tile ? spawn.tile.value : 0,
+    ]);
     steps += 1;
   }
 
   const elapsed = (performance.now() - started) / 1000;
-  return {
+  const finalMax = Game.maxValue(board);
+  const stats = {
     game: index + 1,
     seed: seed,
     score: score,
-    maxTile: Game.maxValue(board),
+    maxTile: finalMax,
     steps: steps,
     seconds: elapsed,
     movesPerSecond: steps / Math.max(elapsed, 0.001),
     ended: ended,
     truncated: truncated,
   };
+  const replay = {
+    version: 1,
+    initial: initial,
+    moves: moves,
+    score: score,
+    maxTile: finalMax,
+    seed: seed,
+    game: index + 1,
+    ended: ended,
+    truncated: truncated,
+    finishedAt: new Date().toISOString(),
+  };
+  return { stats: stats, replay: replay };
+}
+
+function saveReplay(replay, gameNumber, seed) {
+  fs.mkdirSync(REPLAY_DIR, { recursive: true });
+  const stem = 'game-' + String(gameNumber).padStart(3, '0') + '-seed-' + seed;
+  const payload = JSON.stringify(replay); // compact JSON keeps large replays small
+  let suffix = 0;
+  while (true) {
+    const file = path.join(REPLAY_DIR, stem + (suffix ? '-' + suffix : '') + '.json');
+    let fd;
+    try {
+      // "wx" creates exclusively: concurrent runs can never overwrite a replay.
+      fd = fs.openSync(file, 'wx');
+      fs.writeFileSync(fd, payload, 'utf8');
+      return file;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+    } finally {
+      if (fd !== undefined) fs.closeSync(fd);
+    }
+    suffix += 1;
+  }
 }
 
 function summarize(games) {
@@ -182,6 +233,7 @@ async function main() {
     console.log('Usage: node scripts/ai-benchmark.js [--games N] [--seed S] [--max-moves N]');
     console.log('       [--endpoint URL] [--out BASE_PATH]');
     console.log('Default: 1 game. Examples: --games 10, --games 100, --games 500.');
+    console.log('Every game also saves a replay to reports/replays/game-NNN-seed-S.json.');
     return;
   }
 
@@ -203,10 +255,14 @@ async function main() {
   for (let i = 0; i < gameCount; i++) {
     const gameSeed = seed + i * 7919;
     process.stdout.write('game ' + (i + 1) + '/' + gameCount + ' (seed ' + gameSeed + ')... ');
-    const game = await playGame(client, i, gameSeed, maxMoves);
+    const result = await playGame(client, i, gameSeed, maxMoves);
+    const replayFile = saveReplay(result.replay, i + 1, gameSeed);
+    const game = result.stats;
+    game.replayFile = displayPath(replayFile);
     games.push(game);
     console.log('score=' + game.score + ' max=' + game.maxTile +
       ' steps=' + game.steps + ' ' + game.seconds.toFixed(1) + 's');
+    console.log('  replay: ' + game.replayFile);
   }
   const finishedAt = new Date();
   const summary = summarize(games);
@@ -225,6 +281,7 @@ async function main() {
     seed: seed,
     maxMoves: maxMoves,
     requestedGames: gameCount,
+    replayDirectory: displayPath(REPLAY_DIR),
     summary: summary,
     games: games,
   };
@@ -240,6 +297,8 @@ async function main() {
   fs.writeFileSync(csvPath, csv, 'utf8');
 
   printSummary(summary, jsonPath, csvPath, endpoint, seed);
+  console.log('Replay directory: ' + displayPath(REPLAY_DIR) +
+    ' (' + games.length + ' replay' + (games.length === 1 ? '' : 's') + ' from this run)');
 }
 
 main().catch((error) => {

@@ -237,6 +237,15 @@ node scripts/ai-benchmark.js --games 500 --out reports/run-500
 - `--max-moves N`: safety cap per game (default 100,000).
 - `--endpoint URL`: AI `/move` endpoint (default `http://127.0.0.1:8080/move`).
 - `--out PATH`: report base path; default `reports/ai-benchmark-<timestamp>`.
+- Every game automatically writes a complete **version-1 replay** to
+  `reports/replays/game-NNN-seed-S.json` (initial board, every move direction,
+  every spawned tile position/value, final score and max tile). The format is
+  exactly the one accepted by the page's **导入回放** importer, so the file can
+  be imported directly and opens on its final board. Existing files are never
+  overwritten: a repeated run gets a `-1`, `-2`, … suffix. The replay path for
+  each game is printed in the terminal and stored as `replayFile` in the JSON
+  report; `replayDirectory` is stored on the report as well. Replays are under
+  `reports/`, which Git ignores.
 
 Each game records score, max tile, steps, seconds, moves/s, ended/truncated.
 The summary includes average/best score, max tile distribution, achievement
@@ -268,7 +277,7 @@ replay.js                                    replay validation + snapshot seekin
 ai-client.js                                 board encoding + AI HTTP client
 serve.js                                     static server + AI proxy
 scripts/start.ps1 / stop-ai.ps1              one-command local startup/stop
-scripts/ai-benchmark.js                      headless batch AI benchmark + JSON/CSV
+scripts/ai-benchmark.js                      headless batch AI benchmark + JSON/CSV + replays
 scripts/benchmark.js                         compatibility wrapper for ai-benchmark.js
 scripts/browser-test.js                      Headless Edge smoke test (no visible window)
 scripts/test-all.js                          unit tests + Headless Edge
