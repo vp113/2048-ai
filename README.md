@@ -8,6 +8,14 @@ The browser owns the real game: board, moves, merges, spawning, score, and
 record. A small Node server serves the page and proxies move requests to the AI
 service running in Docker.
 
+Project documentation:
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — modules, protocols, data flow.
+- [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) — verified features, test
+  results, fixes, limitations, and candidate next work.
+- [`CLAUDE.md`](CLAUDE.md) — concise working rules and commands for new Claude
+  Code sessions.
+
 ## Quick start (Windows)
 
 Prerequisites: Docker Desktop and Node.js are installed. The first start needs
@@ -144,8 +152,8 @@ Browser
   component is GPL-3.0.
 - The small `2048` build is used (not the 27 GB `2048b` build).
 - A minimal local patch in `2048.cc` changes HTTP response line endings to
-  CRLF and adds `Connection: close`, so browser/Node `fetch` accepts the
-  server response. The algorithm and tables are unchanged.
+  CRLF so browser/Node `fetch` accepts the server response; HTTP/1.1
+  keep-alive remains enabled. The algorithm and tables are unchanged.
 - The generated lookup tables are about **2.5 GB** and are excluded from Git
   (`vendor/2048-ai/tables/`, `*.log`).
 
