@@ -2,7 +2,7 @@
 
 - 快照日期：2026-10-21
 - 分支：`main`
-- 功能基线：`d633a8f`（Add resumable background 65536 challenge；本次文档更新前）
+- 功能基线：`6ebd023`（Add resumable background 65536 challenge；本次文档更新前）
 - 状态：功能可用，工作区干净；后台测试、每局回放导出和 65536 挑战均已实现。
 
 本文件只记录可验证的当前事实。安装步骤与用户功能说明见 `README.md`，模块细节见
@@ -61,7 +61,7 @@
 
 ### 后台基准与回放导出
 
-已完成，提交 `9140d34`：
+已完成，提交 `bba2427`：
 
 ```powershell
 node scripts/ai-benchmark.js
@@ -95,7 +95,7 @@ node scripts/browser-test.js --replay=reports/replays/game-001-seed-1.json
 
 ### 65536 后台挑战
 
-已完成，提交 `d633a8f`：
+已完成，提交 `6ebd023`：
 
 ```powershell
 # 默认无限挑战，后台运行
@@ -133,13 +133,13 @@ node scripts/challenge-65536.js --state reports/challenge-65536/run-2.json
 
 | 提交 | 内容 |
 |------|------|
-| `d633a8f` | 可恢复的 65536 后台挑战；并行、状态报告、成功回放、单测 |
-| `9140d34` | 每局 AI 基准自动保存完整回放；终端/报告输出路径；防覆盖 |
-| `f147794` | 后台 Headless 测试、AI 基准入口、`start.ps1 -NoBrowser` |
-| `3d46ce2` | 最终棋盘保留、自动连续挑战、JSON 回放查看器 |
-| `911247c` | 修复串行 AI 播放与棋盘/DOM 渲染同步 |
-| `9b2e03f` | 引入 C++ Expectimax 高性能 AI 网页展示架构 |
-| `d8a1ca9` | 删除 DQN 和 Python RL 组件，确定当前产品路线 |
+| `6ebd023` | 可恢复的 65536 后台挑战；并行、状态报告、成功回放、单测 |
+| `bba2427` | 每局 AI 基准自动保存完整回放；终端/报告输出路径；防覆盖 |
+| `74b1d43` | 后台 Headless 测试、AI 基准入口、`start.ps1 -NoBrowser` |
+| `1e60221` | 最终棋盘保留、自动连续挑战、JSON 回放查看器 |
+| `d6dcc59` | 修复串行 AI 播放与棋盘/DOM 渲染同步 |
+| `4d23cc3` | 引入 C++ Expectimax 高性能 AI 网页展示架构 |
+| `67870e4` | 删除 DQN 和 Python RL 组件，确定当前产品路线 |
 
 更早的 RL/DQN 提交只保留在 Git 历史中，不属于当前代码路线；不要重新引入。
 

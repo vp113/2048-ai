@@ -102,7 +102,7 @@ node scripts/challenge-65536.js --state reports/challenge-65536/test.json \
 1. **不要随意修改上游 AI**：除非用户明确要求，不修改 `vendor/2048-ai/` 的核心算法、
    Expectimax 逻辑、Tuple 查找表或 Docker 核心配置。当前唯一已知兼容补丁是 HTTP
    响应使用 CRLF（算法/规则/查找表不变）。
-2. **不要重新引入 DQN/旧 Python RL**：相关代码已在 `d8a1ca9` 删除；当前产品路线是
+2. **不要重新引入 DQN/旧 Python RL**：相关代码已在 `67870e4` 删除；当前产品路线是
    C++ Expectimax + 本地服务。
 3. **测试默认后台**：不打开/切换可见 Edge，不抢占焦点，不自动打开外部浏览器；
    只有用户显式要求或 `--visible` 才可视化。
