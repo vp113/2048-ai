@@ -25,6 +25,15 @@ The script:
 4. generates the lookup tables on the very first run (about 4–8 minutes);
 5. starts the page server and opens <http://localhost:8000>.
 
+For background/manual startup without opening a browser:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -NoBrowser
+```
+
+`-NoBrowser` also starts the Node page server hidden if it is not running.
+The default command still opens the browser for normal manual play.
+
 Click **AI 开始** to start auto-play. To stop the background services:
 
 ```powershell
@@ -188,24 +197,68 @@ depth 3), four real games:
     drag, and exit all worked; importing an invalid file showed a clear error
     and left the page in normal mode.
 
-The benchmark is reproducible with:
+## Background testing (default)
+
+All test entries are terminal/background by default:
 
 ```bash
-node scripts/benchmark.js --games 3
+node test.js                       # unit tests only, terminal
+node scripts/browser-test.js       # Headless Edge, no visible window
+node scripts/test-all.js           # unit tests, then Headless Edge
 ```
+
+- The browser test launches Headless Edge with `--headless=new`, no visible
+  window, no focus stealing, and closes it itself. It does not open an external
+  browser at the end.
+- `--replay=PATH` additionally validates a real replay file in Headless Edge:
+  opening at the final board, start/middle/end seeks, and exit.
+- `--visible` is the only way to launch a visible Edge; it is opt-in only and
+  is not used by default.
+- The suite covers board rules, merge/score behaviour, spawn rules, game-over
+  detection, AI board encoding (including `65536 -> G`), reply mapping, the
+  static server/`/move` proxy, replay-record reconstruction, and replay JSON
+  validation/seeking (first/middle/final states, invalid moves, occupied spawn
+  cells, score/max mismatches, and read-only input).
+
+## Background AI benchmark
+
+This does not use a browser or DOM. It plays full games through the same
+`game.js` rules and the existing C++ `/move` endpoint:
+
+```bash
+node scripts/ai-benchmark.js --games 10
+node scripts/ai-benchmark.js --games 100 --seed 7
+node scripts/ai-benchmark.js --games 500 --out reports/run-500
+```
+
+- Default is **1 game**; large runs are never started automatically.
+- `--games N`: number of games (10, 100, 500, …).
+- `--seed S`: reproducible seeded spawns (per game seed is derived from S).
+- `--max-moves N`: safety cap per game (default 100,000).
+- `--endpoint URL`: AI `/move` endpoint (default `http://127.0.0.1:8080/move`).
+- `--out PATH`: report base path; default `reports/ai-benchmark-<timestamp>`.
+
+Each game records score, max tile, steps, seconds, moves/s, ended/truncated.
+The summary includes average/best score, max tile distribution, achievement
+rates for 2048 / 4096 / 8192 / 16384 / 32768 / 65536, average steps/time, and
+overall throughput. Results are written as both JSON and CSV under `reports/`
+(ignored by Git). `scripts/benchmark.js` remains a compatibility wrapper for
+the same command.
+
+Example verified small run (`--games 3 --seed 1`): 3/3 games completed, average
+558,009 points, all reached 32768, 626 moves/s. This is a 3-game sample, not a
+statistical claim.
 
 ## Tests
 
 ```bash
 node test.js
+node scripts/browser-test.js
+node scripts/test-all.js
 ```
 
-The suite covers board rules, merge/score behaviour, spawn rules, game-over
-detection, AI board encoding (including `65536 -> G`), reply mapping, the
-static server/`/move` proxy, replay-record reconstruction, and replay JSON
-validation/seeking (first/middle/final states, invalid moves, occupied spawn
-cells, score/max mismatches, and read-only input). The browser checks above
-were run against a real Edge page via CDP.
+The browser test above uses Headless Edge by default; no visible browser
+window is created. All browser checks described earlier were also run via CDP.
 
 ## Files
 
@@ -215,7 +268,10 @@ replay.js                                    replay validation + snapshot seekin
 ai-client.js                                 board encoding + AI HTTP client
 serve.js                                     static server + AI proxy
 scripts/start.ps1 / stop-ai.ps1              one-command local startup/stop
-scripts/benchmark.js                         headless full-game benchmark
+scripts/ai-benchmark.js                      headless batch AI benchmark + JSON/CSV
+scripts/benchmark.js                         compatibility wrapper for ai-benchmark.js
+scripts/browser-test.js                      Headless Edge smoke test (no visible window)
+scripts/test-all.js                          unit tests + Headless Edge
 vendor/2048-ai/                              pinned upstream source + Dockerfile
 vendor/2048-ai/tables/                       generated, ignored (about 2.5 GB)
 test.js                                      Node test suite

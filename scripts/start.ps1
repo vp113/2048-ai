@@ -1,3 +1,7 @@
+param(
+  [switch]$NoBrowser
+)
+
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -73,10 +77,18 @@ try {
 } catch { }
 if (-not $webUp) {
   $node = Get-Command node -ErrorAction Stop
-  Start-Process -FilePath $node.Source -ArgumentList 'serve.js' -WorkingDirectory $root
+  if ($NoBrowser) {
+    Start-Process -FilePath $node.Source -ArgumentList 'serve.js' -WorkingDirectory $root -WindowStyle Hidden
+  } else {
+    Start-Process -FilePath $node.Source -ArgumentList 'serve.js' -WorkingDirectory $root
+  }
   Start-Sleep -Seconds 1
 }
 
-Write-Host 'Opening http://localhost:8000 ...'
-Start-Process 'http://localhost:8000'
-Write-Host 'AI is ready. Close the Node server window to stop the page server.'
+if ($NoBrowser) {
+  Write-Host 'Services are ready. Open http://localhost:8000 manually (NoBrowser).'
+} else {
+  Write-Host 'Opening http://localhost:8000 ...'
+  Start-Process 'http://localhost:8000'
+}
+Write-Host 'AI is ready. Stop with scripts/stop-ai.ps1 or close the Node server window.'

@@ -1,6 +1,9 @@
 # Local run/build artifacts
 *.log
 
+# AI benchmark reports
+reports/
+
 # Upstream 2048-ai build artifacts (if vendored/built locally)
 vendor/2048-ai/2048
 vendor/2048-ai/2048b
