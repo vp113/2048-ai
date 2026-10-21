@@ -1,7 +1,8 @@
 # CLAUDE.md
 
 本文件面向在本仓库工作的 Claude Code 会话。开始改动前先读本文件；需要细节时再读
-`README.md`、`docs/ARCHITECTURE.md`、`docs/PROJECT_STATUS.md`。不要依赖历史聊天记录。
+`README.md`、`docs/ARCHITECTURE.md`、`docs/PROJECT_STATUS.md`、`docs/HANDOFF.md`。
+不要依赖历史聊天记录。
 
 ## 项目定位
 
@@ -27,6 +28,8 @@ Docker 容器 2048-ai（C++ Expectimax，-d3，Tuple10/Tuple11 查找表）
 - 后台基准不启动浏览器，复用同一套 `game.js` 规则和 `/move` 接口。
 - 65536 挑战同样后台运行，复用基准的 `playGame`/回放写入；达到目标后仍继续到
   自然 Game Over，成功时只保留该局回放和状态/统计报告。
+- 首个真实成功局（seed 411789，1,148,460 分，65536，37,257 步，56 次尝试）已归档到
+  `archives/challenge-65536/`；原始回放仍保留在 `reports/`。
 - 回放导入只重放记录，不重新随机、不调用 AI；打开时默认停在最终棋盘。
 
 ## 关键文件
@@ -44,9 +47,11 @@ Docker 容器 2048-ai（C++ Expectimax，-d3，Tuple10/Tuple11 查找表）
 | `scripts/test-all.js` | 单元测试，然后 Headless Edge 测试 |
 | `scripts/start.ps1` / `stop-ai.ps1` | 本地 Docker/页面服务启动与停止 |
 | `vendor/2048-ai/` | 固定上游版本、最小 C++ 构建、兼容补丁；核心算法不在此修改 |
+| `archives/challenge-65536/` | Git 管理的首次 65536 成功回放、最终报告、校验和 |
 | `test.js` | Node 单元测试（规则、AI 编码/客户端、服务器代理、回放） |
 | `docs/ARCHITECTURE.md` | 模块边界、协议、数据流、持久化 |
 | `docs/PROJECT_STATUS.md` | 当前功能、最近提交、验证结果、已知限制、后续候选 |
+| `docs/HANDOFF.md` | 新会话交接：结构、启动、测试、决策、稳定状态 |
 
 ## 常用命令
 
@@ -65,6 +70,7 @@ node serve.js
 node test.js
 node scripts/test-all.js
 node scripts/browser-test.js --replay=reports/replays/game-001-seed-1.json
+node scripts/browser-test.js --replay=archives/challenge-65536/game-053-seed-411789.json
 
 # 后台 AI 基准（默认 1 局；必须已有 AI 服务）
 node scripts/ai-benchmark.js
@@ -84,8 +90,9 @@ node scripts/challenge-65536.js --state reports/challenge-65536/test.json \
 - 浏览器测试默认使用 Headless Edge，只有显式 `--visible` 才创建可见窗口。
 - 挑战默认并发 2，安全上限 4；不要在开发验收中启动默认无限挑战。
 - `reports/`（包括 `reports/replays/` 与 `reports/challenge-65536/`）被 Git 忽略；
-  不要提交。
-- 回放导出格式和实际用法见 `docs/ARCHITECTURE.md`，功能状态见 `docs/PROJECT_STATUS.md`。
+  不要提交。`archives/challenge-65536/` 是唯一有意纳入 Git 的成功回放归档。
+- 回放导出格式和实际用法见 `docs/ARCHITECTURE.md`，功能状态见
+  `docs/PROJECT_STATUS.md`，交接摘要见 `docs/HANDOFF.md`。
 
 ## 必须遵守的项目约束
 
@@ -105,7 +112,8 @@ node scripts/challenge-65536.js --state reports/challenge-65536/test.json \
 7. **完成后验证并提交**：重要改动要跑相关测试，确认 Git 状态，提交清晰信息；
    测试失败或跳过必须如实报告。
 8. **不提交敏感/大文件**：不写入 API Key、密钥、个人绝对路径；不提交查找表、
-   `reports/`、日志或浏览器 profile。
+   `reports/`、日志或浏览器 profile。`archives/challenge-65536/` 的归档回放是
+   明确例外，必须保留；不要删除 `reports/` 中的原始成功回放。
 9. **静态文件有白名单**：新增浏览器脚本/样式时，必须同时更新 `serve.js` 的
    `STATIC_FILES`，否则页面会 404。
 10. **文档以代码和 Git 为准**：不确定的内容不要编造；更新功能时同步更新本文件或
@@ -120,4 +128,6 @@ node scripts/challenge-65536.js --state reports/challenge-65536/test.json \
   Headless Edge 验证最终棋盘/分数一致。
 - 65536 挑战改动：用 `--max-games` 跑有限局，验证并发、恢复、目标+自然结束判定，
   以及成功回放的最终棋盘/得分/步数一致；不得用真实无限挑战做验收。
+- 归档/交接改动：验证 `archives/challenge-65536/` 回放可重建并与原始文件一致；
+  用 Headless Edge 导入；不要删除原始 `reports/` 回放或查找表。
 - 工作区干净，提交信息说明用户可见行为与验证结果。

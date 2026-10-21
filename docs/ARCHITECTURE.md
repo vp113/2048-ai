@@ -1,7 +1,8 @@
 # 架构说明
 
 本文描述当前代码的实际结构与数据流。用户安装步骤、功能说明和验证数据见根目录
-`README.md`；当前完成度与限制见 `docs/PROJECT_STATUS.md`。
+`README.md`；当前完成度与限制见 `docs/PROJECT_STATUS.md`；新会话交接见
+`docs/HANDOFF.md`。
 
 ## 1. 总览
 
@@ -299,6 +300,9 @@ reports/challenge-65536/state.json
 - 代码不删除任何既有回放或报告；因为非成功局没有临时回放，成功时无需额外清理，
   最终目录只包含状态/统计报告和成功回放（以及用户此前已有的文件）。
 - 成功后停止调度其他局；已发出的请求最多等 3 秒，然后进程退出。
+- 首个真实成功局已从 `reports/challenge-65536/` 复制到 Git 管理的
+  `archives/challenge-65536/`（回放 + 最终报告 + 校验和）。原始回放仍保留；
+  归档文件不应改写或删除。
 
 ### 7.5 常用选项
 
@@ -377,6 +381,7 @@ node scripts/challenge-65536.js --state reports/challenge-65536/test.json `
 | `reports/replays/*.json` | 基准每局回放，Git 忽略 |
 | `reports/challenge-65536/state.json` | 挑战状态/统计报告，默认路径，Git 忽略 |
 | `reports/challenge-65536/game-*.json` | 挑战成功回放，Git 忽略 |
+| `archives/challenge-65536/` | 首次 65536 成功回放、最终报告、校验和，纳入 Git |
 | `vendor/2048-ai/tables/` | 约 2.5 GB 查找表，Git 忽略 |
 | `*.log`（忽略规则） | 本地日志，不提交 |
 

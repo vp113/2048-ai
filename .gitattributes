@@ -1,0 +1,2 @@
+# Preserve archived evidence byte-for-byte across Windows checkouts.
+archives/** -text

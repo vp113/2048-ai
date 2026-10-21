@@ -6,7 +6,32 @@
 - 状态：功能可用，工作区干净；后台测试、每局回放导出和 65536 挑战均已实现。
 
 本文件只记录可验证的当前事实。安装步骤与用户功能说明见 `README.md`，模块细节见
-`docs/ARCHITECTURE.md`。
+`docs/ARCHITECTURE.md`，新会话交接见 `docs/HANDOFF.md`。
+
+## 最终成果（2026-10-21）
+
+- 网页版 2048 展示页：原生 HTML/CSS/JS，保留原视觉和滑动动画。
+- C++ Expectimax AI（macroxue/2048-ai，固定上游提交，depth 3，Tuple10/11 查找表），
+  通过 Docker 服务提供 `/move` 建议。
+- Node.js `serve.js`：精确静态文件白名单 + 同源 `/move` 代理。
+- 严格串行实时 AI 播放、最终棋盘保留、自动连续挑战、JSON 回放导入/查看。
+- 后台 Headless 测试、批量 AI 基准、每局 version 1 回放导出。
+- 65536 后台挑战：并行运行、自然 Game Over 判定、断点恢复、成功回放验证。
+
+首次成功对局（已归档）：
+
+- Challenge index：52（第 53 局）
+- Seed：**411789**
+- 最终得分：**1,148,460**
+- 最大方块：**65536**
+- 步数：**37,257**
+- 总尝试局数：**56**
+- 原始回放（保留，Git 忽略）：
+  `reports/challenge-65536/game-053-seed-411789.json`
+- Git 归档回放：
+  `archives/challenge-65536/game-053-seed-411789.json`
+- 归档最终报告：
+  `archives/challenge-65536/final-report.json`
 
 ## 1. 当前已实现
 
@@ -124,7 +149,7 @@ node scripts/challenge-65536.js --state reports/challenge-65536/run-2.json
 
 - `node test.js`：**25 passed, 0 failed**。
 - `node scripts/test-all.js`：25 项单测通过 + Headless Edge 冒烟测试
-  `HEADLESS_BROWSER_TEST_PASS mode=headless`。
+  `HEADLESS_BROWSER_TEST_PASS mode=headless`；归档完成后再次运行同样通过。
 - 1 局基准（seed 1）：
   - 得分 **469,056**
   - 最大方块 **32,768**
@@ -155,8 +180,12 @@ node scripts/challenge-65536.js --state reports/challenge-65536/run-2.json
 - **目录清理**：全新目录的成功测试最终仅有 `state.json` 和 1 个成功回放；非成功局
   没有回放文件，既有文件未删除。
 - **成功状态重跑**：直接打印既有成功摘要，不启动新局。
-- 以上通过 `--max-games` / `--target-tile` 验证；未在开发验收中启动默认无限挑战，
-  也未真正产生 65536 对局。
+- **最终归档完整性**：`archives/challenge-65536/game-053-seed-411789.json` 与原始
+  `reports/challenge-65536/game-053-seed-411789.json` 字节一致，原文件保留；
+  `Replay.buildReplay` 重建得到 37,257 步、1,148,460 分、65536；Headless Edge
+  导入/seek 通过（37,257 steps）。
+- 以上通过 `--max-games` / `--target-tile` 验证；未在开发验收中启动默认无限挑战。
+  后续真实运行已完成第一局 65536 成功对局，统计见上方“最终成果”。
 
 ### 更早的验收样本
 
@@ -201,8 +230,9 @@ node scripts/challenge-65536.js --state reports/challenge-65536/run-2.json
 - UI 播放速度上限 20 步/秒；AI 基准的数百步/秒是引擎/代理吞吐量，不是网页播放速度。
 - 回放文件是完整移动+生成记录；局数很多且不做清理时，`reports/replays/` 会持续增长。
 - 回放导入上限 20 MB；大回放若超过需先裁剪/转换（当前无内置工具）。
-- 65536 挑战默认并发 2（上限 4），默认无限运行；真实 65536 对局在开发验收中未产生，
-  深度 3 的上游统计约为 1% 局数达到 65536，挑战可能耗时较长。
+- 65536 挑战默认并发 2（上限 4），默认无限运行；开发验收用小目标/限局完成，后续
+  正式挑战已成功一次（seed 411789，56 次尝试）。深度 3 的上游统计约为 1% 局数达到
+  65536，实际耗时可能较长。
 - 挑战状态报告会随已完成局数增长，每局完成后整体重写；当前没有分片或自动压缩。
 - 挑战成功后最多等待 3 秒让其他在途请求结束；Ctrl+C 时在途局不记为完成，恢复会重试。
 - 挑战的非成功局按设计不保存回放；`--max-games` / `--target-tile` 只用于测试/采样，
@@ -225,11 +255,15 @@ node scripts/challenge-65536.js --state reports/challenge-65536/run-2.json
 
 ## 7. 新会话继续开发
 
-1. 先读 `CLAUDE.md`，再按需读本文件和 `docs/ARCHITECTURE.md`。
+1. 先读 `CLAUDE.md` 和 `docs/HANDOFF.md`，再按需读本文件和
+   `docs/ARCHITECTURE.md`。
 2. 检查 `git status`、`git log -5`，不要假设历史工作区状态。
 3. 确认服务：页面 `:8000`、AI `:8080`；后台测试不要打开可见浏览器。
 4. 改动后至少跑相关测试；涉及 UI/AI 循环/回放时跑 `node scripts/test-all.js`。
 5. 涉及回放导出时跑 1 局基准，并用 `scripts/browser-test.js --replay=...` 验证。
 6. 涉及 65536 挑战时，用 `--max-games` 跑有限局；必要时加 `--target-tile`，
    验证并发、恢复、自然结束和成功回放；不要启动默认无限挑战。
-7. 提交前检查 Git 状态，确保没有 `reports/`、查找表、日志或敏感信息进入提交。
+7. 交接/归档后不要删除 `archives/challenge-65536/` 或原始成功回放；可用
+   `scripts/browser-test.js --replay=archives/challenge-65536/game-053-seed-411789.json`
+   复验。
+8. 提交前检查 Git 状态，确保没有 `reports/`、查找表、日志或敏感信息进入提交。

@@ -13,6 +13,7 @@ Project documentation:
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — modules, protocols, data flow.
 - [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) — verified features, test
   results, fixes, limitations, and candidate next work.
+- [`docs/HANDOFF.md`](docs/HANDOFF.md) — concise handoff for a new session.
 - [`CLAUDE.md`](CLAUDE.md) — concise working rules and commands for new Claude
   Code sessions.
 
@@ -308,6 +309,19 @@ node scripts/challenge-65536.js --state reports/challenge-65536/run-2.json --see
 the AI algorithm, Docker configuration, and web UI are unchanged. It is not
 started by `test-all.js`; use `--max-games` for bounded acceptance runs.
 
+### First successful 65536 game
+
+- Seed **411789**, final score **1,148,460**, max tile **65536**, **37,257**
+  steps, **56** total attempts.
+- Git-tracked archive:
+  [`archives/challenge-65536/game-053-seed-411789.json`](archives/challenge-65536/game-053-seed-411789.json)
+- Original (kept, Git-ignored):
+  `reports/challenge-65536/game-053-seed-411789.json`
+- The archived replay reconstructs to the recorded final board/score/steps and
+  passes Headless Edge import/seeking. Use **导入回放** to view it.
+- Provenance and checksums:
+  [`archives/challenge-65536/README.md`](archives/challenge-65536/README.md).
+
 ## Tests
 
 ```bash
@@ -331,6 +345,7 @@ serve.js                                     static server + AI proxy
 scripts/start.ps1 / stop-ai.ps1              one-command local startup/stop
 scripts/ai-benchmark.js                      headless batch AI benchmark + JSON/CSV + replays
 scripts/challenge-65536.js                   resumable background 65536 challenge
+archives/challenge-65536/                    Git-tracked 65536 success replay + report
 scripts/benchmark.js                         compatibility wrapper for ai-benchmark.js
 scripts/browser-test.js                      Headless Edge smoke test (no visible window)
 scripts/test-all.js                          unit tests + Headless Edge
