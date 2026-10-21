@@ -44,13 +44,14 @@ connection status; it does not silently fall back to a weaker AI.
 
 ## Features
 
-- Original 2048 board, colours, layout, and tile animations.
+- Original 2048 board, colours, layout, and slide animation.
 - AI 开始 / 暂停 / 继续; restart.
-- Speed modes:
-  - **普通**: visible slide/merge animation, about 4–5 moves/s.
-  - **快速**: short transitions, about 14 moves/s.
-  - **极速**: no animation, render throttled to ~20 fps, moves as fast as the
-    local AI responds.
+- **Strictly serial AI steps**:
+  - request one decision → apply one move → spawn exactly one tile →
+    finish the board render → verify DOM/board consistency → wait.
+  - playback options **3 / 5 / 8 / 12 / 20 moves per second**; default **8**.
+  - pause finishes the current render and stops before the next step; resume
+    continues the same game.
 - Current score, best score, current max tile, historical max tile.
 - Achievements at **32768** and **65536** (localStorage, toast notification).
 - Automatic next game after game over; one session is capped at **500 games**
@@ -119,9 +120,20 @@ depth 3), four real games:
   1000-game depth-3 statistics (about 417k average, 37.8% 32768, 1.0% 65536),
   which are the better reference; a 4-game sample is not a statistical claim.
 - The separate direct CLI game above did reach 65536.
-- The web game intentionally throttles normal/fast modes. Extreme mode runs as
-  fast as the local AI (hundreds of moves/s measured headlessly); rendering is
-  capped at about 20 fps to avoid burning the main thread.
+- The table measures the **AI engine/proxy in a headless loop**, not the web
+  playback rate. The web UI is deliberately strictly serial and capped at
+  **3–20 moves/s** (default 8); it never plays at hundreds of moves/s.
+- Browser verification (real Edge page, CDP):
+  - default 8/s produced 8 moves in 1 s;
+  - 5/s produced 6 moves in 1.2 s; 20/s produced 20 moves in 1 s;
+  - 3/s produced about 5 moves in 1.5 s;
+  - 12/s produced 15 moves in 1.2 s on a fresh board; one harder-board segment
+    was slower because the serial AI decision took longer (the selected rate is
+    an upper bound; decision quality is not traded for playback rate);
+  - pause produced zero moves over the next 1 s; resume continued;
+  - 62 moves produced exactly 62 spawned tiles;
+  - after each settled step, DOM tile count/ids/values matched the logical
+    board; no residual, duplicate, or pending animation state.
 
 The benchmark is reproducible with:
 

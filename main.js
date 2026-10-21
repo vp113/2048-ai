@@ -1,7 +1,9 @@
 /*
  * 2048 AI showcase controller.
- * The local Docker service (macroxue/2048-ai) computes moves; this file owns
- * the board, score, spawns, animation, records, and continuous-play session.
+ *
+ * One strictly serial step:
+ *   request AI move -> apply move -> spawn exactly one tile -> finish render
+ *   -> verify DOM -> wait for the selected step interval -> next step.
  */
 (function () {
   'use strict';
@@ -10,11 +12,14 @@
   const AIClient = window.AI2048Client;
   const SIZE = Game.SIZE;
 
-  const SLIDE_MS = 120;
-  const FAST_SLIDE_MS = 45;
-  const NORMAL_PACE = 220;
-  const FAST_PACE = 70;
-  const EXTREME_RENDER_MS = 50;
+  const SPEEDS = {
+    3: { interval: 1000 / 3, anim: 180 },
+    5: { interval: 200, anim: 120 },
+    8: { interval: 125, anim: 80 },
+    12: { interval: 1000 / 12, anim: 55 },
+    20: { interval: 50, anim: 30 },
+  };
+  const DEFAULT_SPEED = 8;
   const MAX_GAMES = 500;
   const DIRS = ['up', 'right', 'down', 'left'];
   const DIR_INDEX = { up: 0, right: 1, down: 2, left: 3 };
@@ -61,16 +66,17 @@
   let running = false;
   let hasStarted = false;
   let gameOver = true;
-  let speed = 'normal';
+  let speed = DEFAULT_SPEED;
 
   let tileElements = {};
   let layout = { cell: 0, gap: 0, width: 0 };
   let record = null;
   let gameId = 0;
   let runId = 0;
+  let loopActive = false;
+  let pendingAnimation = null;
   let autoTimer = null;
   let toastTimer = null;
-  let lastRender = 0;
 
   let aiReady = false;
   let aiChecking = false;
@@ -82,7 +88,7 @@
   // ------------------------------------------------------------------
   function readInt(key) {
     try {
-      var value = parseInt(localStorage.getItem(key), 10);
+      const value = parseInt(localStorage.getItem(key), 10);
       return Number.isFinite(value) ? value : 0;
     } catch (e) {
       return 0;
@@ -97,7 +103,7 @@
     best = readInt(BEST_KEY);
     bestMax = readInt(BEST_MAX_KEY);
     try {
-      var parsed = JSON.parse(safeGet(ACH_KEY) || '{}');
+      const parsed = JSON.parse(safeGet(ACH_KEY) || '{}');
       achievements = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
     } catch (e) {
       achievements = {};
@@ -109,7 +115,7 @@
     try {
       localStorage.setItem(BEST_KEY, String(best));
       localStorage.setItem(BEST_MAX_KEY, String(bestMax));
-    } catch (e) { /* storage may be full or disabled */ }
+    } catch (e) { /* ignore */ }
   }
 
   function saveAchievements() {
@@ -122,7 +128,7 @@
 
   function saveReplayRecord() {
     if (!record) return;
-    var data = {
+    const data = {
       version: 1,
       initial: record.initial,
       moves: record.moves,
@@ -139,7 +145,7 @@
   }
 
   // ------------------------------------------------------------------
-  // Small UI helpers
+  // UI helpers
   // ------------------------------------------------------------------
   function fmt(value) {
     return Number(value || 0).toLocaleString('en-US');
@@ -176,10 +182,10 @@
       ? '已完成 ' + gamesPlayed + ' 局'
       : '第 ' + (gamesPlayed + 1) + ' 局 · 已完成 ' + gamesPlayed + ' 局';
 
-    var badges = [];
+    const badges = [];
     if (achievements['32768']) badges.push('32768 ✓');
     if (achievements['65536']) badges.push('65536 ✓');
-    var parts = [];
+    const parts = [];
     if (bestMax) parts.push('历史最大 ' + fmt(bestMax));
     if (badges.length) parts.push(badges.join(' · '));
     achEl.textContent = parts.join(' · ');
@@ -190,6 +196,20 @@
       ? 'AI 暂停'
       : (gameOver || !hasStarted ? 'AI 开始' : 'AI 继续');
     toggleBtn.classList.toggle('active', running);
+  }
+
+  function setSpeed(nextSpeed) {
+    const value = Number(nextSpeed);
+    if (!SPEEDS[value]) return;
+    speed = value;
+    boardEl.style.setProperty('--tile-ms', SPEEDS[value].anim + 'ms');
+    const buttons = speedEl.querySelectorAll('button');
+    for (let i = 0; i < buttons.length; i++) {
+      buttons[i].classList.toggle(
+        'active',
+        Number(buttons[i].getAttribute('data-speed')) === speed
+      );
+    }
   }
 
   // ------------------------------------------------------------------
@@ -221,12 +241,12 @@
   }
 
   // ------------------------------------------------------------------
-  // Layout and rendering (reuses the original visual style)
+  // Layout and rendering
   // ------------------------------------------------------------------
   function measure() {
-    var width = boardEl.clientWidth || 400;
-    var gap = Math.round(width * 0.03);
-    var cell = Math.floor((width - gap * (SIZE + 1)) / SIZE);
+    const width = boardEl.clientWidth || 400;
+    const gap = Math.round(width * 0.03);
+    const cell = Math.floor((width - gap * (SIZE + 1)) / SIZE);
     layout.cell = cell;
     layout.gap = gap;
     layout.width = width;
@@ -252,13 +272,13 @@
 
   function buildBackground() {
     cellLayer.innerHTML = '';
-    for (var r = 0; r < SIZE; r++) {
-      for (var c = 0; c < SIZE; c++) {
-        var cell = document.createElement('div');
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        const cell = document.createElement('div');
         cell.className = 'cell';
         cell.style.width = layout.cell + 'px';
         cell.style.height = layout.cell + 'px';
-        var pos = positionOf(r, c);
+        const pos = positionOf(r, c);
         cell.style.transform = 'translate(' + pos.x + 'px,' + pos.y + 'px)';
         cellLayer.appendChild(cell);
       }
@@ -272,18 +292,18 @@
   }
 
   function place(el, row, col) {
-    var pos = positionOf(row, col);
+    const pos = positionOf(row, col);
     el.style.setProperty('--tx', pos.x + 'px');
     el.style.setProperty('--ty', pos.y + 'px');
   }
 
-  function createTileElement(tile, row, col, isNew) {
-    var el = document.createElement('div');
+  function createTileElement(tile, row, col) {
+    const el = document.createElement('div');
     el.className = 'tile tile-' + valueClass(tile.value);
-    el.textContent = tile.value;
+    el.textContent = String(tile.value);
+    el.dataset.id = String(tile.id);
     applyMetrics(el, tile.value);
     place(el, row, col);
-    if (isNew) el.classList.add('tile-new');
     tileLayer.appendChild(el);
     tileElements[tile.id] = el;
     return el;
@@ -294,59 +314,103 @@
     tileElements = {};
   }
 
-  function renderBoard(animateNew) {
+  function renderBoard() {
     clearTiles();
-    for (var r = 0; r < SIZE; r++) {
-      for (var c = 0; c < SIZE; c++) {
-        var tile = board[r][c];
-        if (tile) createTileElement(tile, r, c, animateNew);
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        const tile = board[r][c];
+        if (tile) createTileElement(tile, r, c);
       }
     }
   }
 
   function moveTile(id, row, col) {
-    var el = tileElements[id];
+    const el = tileElements[id];
     if (el) place(el, row, col);
   }
 
   function updateTileValue(id, value) {
-    var el = tileElements[id];
+    const el = tileElements[id];
     if (!el) return;
-    el.textContent = value;
+    el.textContent = String(value);
     el.className = 'tile tile-' + valueClass(value);
     applyMetrics(el, value);
-    void el.offsetWidth;
-    el.classList.add('tile-merge');
+  }
+
+  function expectedBoardIds() {
+    const ids = [];
+    for (let r = 0; r < SIZE; r++) {
+      for (let c = 0; c < SIZE; c++) {
+        if (board[r][c]) ids.push(String(board[r][c].id));
+      }
+    }
+    return ids;
+  }
+
+  function verifyDom() {
+    const expected = expectedBoardIds();
+    const children = Array.prototype.slice.call(tileLayer.children);
+    const domIds = children.map(function (el) { return el.dataset.id; });
+    const expectedSet = new Set(expected);
+    const domSet = new Set(domIds);
+    const ok =
+      expected.length === children.length &&
+      expectedSet.size === expected.length &&
+      domSet.size === domIds.length &&
+      expected.every(function (id) { return domSet.has(id); }) &&
+      domIds.every(function (id) { return expectedSet.has(id); }) &&
+      Object.keys(tileElements).length === expected.length;
+    if (!ok) {
+      console.warn('2048: repaired DOM tile desync');
+      renderBoard();
+    }
   }
 
   function animateMove(moveResult, spawn, duration, token) {
     return new Promise(function (resolve) {
-      var i;
-      for (i = 0; i < moveResult.movements.length; i++) {
-        var movement = moveResult.movements[i];
+      for (let i = 0; i < moveResult.movements.length; i++) {
+        const movement = moveResult.movements[i];
         moveTile(movement.id, movement.to.r, movement.to.c);
       }
-      for (i = 0; i < moveResult.merges.length; i++) {
-        var merge = moveResult.merges[i];
+      for (let i = 0; i < moveResult.merges.length; i++) {
+        const merge = moveResult.merges[i];
         moveTile(merge.absorbedId, merge.target.r, merge.target.c);
       }
-      setTimeout(function () {
-        if (token !== gameId) { resolve(); return; }
-        for (var j = 0; j < moveResult.merges.length; j++) {
-          var m = moveResult.merges[j];
-          var absorbed = tileElements[m.absorbedId];
+
+      function finish() {
+        if (token !== gameId) {
+          pendingAnimation = null;
+          resolve();
+          return;
+        }
+        for (let i = 0; i < moveResult.merges.length; i++) {
+          const merge = moveResult.merges[i];
+          const absorbed = tileElements[merge.absorbedId];
           if (absorbed) {
             absorbed.remove();
-            delete tileElements[m.absorbedId];
+            delete tileElements[merge.absorbedId];
           }
-          updateTileValue(m.survivorId, m.value);
+          updateTileValue(merge.survivorId, merge.value);
         }
         if (spawn && spawn.tile) {
-          createTileElement(spawn.tile, spawn.cell.r, spawn.cell.c, true);
+          createTileElement(spawn.tile, spawn.cell.r, spawn.cell.c);
         }
+        pendingAnimation = null;
         resolve();
-      }, duration);
+      }
+
+      const timer = setTimeout(finish, duration);
+      pendingAnimation = { timer: timer, finish: finish, resolve: resolve, token: token };
     });
+  }
+
+  function finishPendingAnimation(applyFinal) {
+    const pending = pendingAnimation;
+    if (!pending) return;
+    clearTimeout(pending.timer);
+    pendingAnimation = null;
+    if (applyFinal && pending.token === gameId) pending.finish();
+    else pending.resolve();
   }
 
   function sleep(ms) {
@@ -364,6 +428,7 @@
   }
 
   function newGame() {
+    finishPendingAnimation(false);
     cancelAuto();
     gameId += 1;
     hasStarted = false;
@@ -377,28 +442,41 @@
     record = { version: 1, initial: Game.toNumbers(board), moves: [] };
     measure();
     buildBackground();
-    renderBoard(true);
+    renderBoard();
     updateScores();
     hideOverlay();
   }
 
   function startLoop() {
+    if (loopActive) return;
+    loopActive = true;
     const id = ++runId;
     running = true;
     hasStarted = true;
     updateButton();
-    aiLoop(id);
+    aiLoop(id)
+      .catch(function (error) {
+        if (id === runId) {
+          stopLoop();
+          setStatus('AI 循环错误：' + error.message, 'err');
+        }
+      })
+      .finally(function () {
+        if (id === runId) loopActive = false;
+      });
   }
 
   function stopLoop() {
     running = false;
     runId += 1;
+    loopActive = false;
     cancelAuto();
     updateButton();
   }
 
   function pauseAI() {
-    var ended = gameOver;
+    const ended = gameOver;
+    finishPendingAnimation(true);
     stopLoop();
     if (ended) {
       showOverlay('已暂停', '本局得分 ' + fmt(score) + '，最大方块 ' + fmt(currentMax) + '。', '继续挑战');
@@ -421,26 +499,16 @@
   }
 
   function restart() {
-    var wasRunning = running;
+    const wasRunning = running;
+    finishPendingAnimation(false);
     stopLoop();
     newGame();
     if (wasRunning) startLoop();
     else updateButton();
   }
 
-  function setSpeed(nextSpeed) {
-    speed = nextSpeed;
-    boardEl.classList.remove('speed-fast', 'speed-extreme');
-    if (speed === 'fast') boardEl.classList.add('speed-fast');
-    if (speed === 'extreme') boardEl.classList.add('speed-extreme');
-    var buttons = speedEl.querySelectorAll('button');
-    for (var i = 0; i < buttons.length; i++) {
-      buttons[i].classList.toggle('active', buttons[i].getAttribute('data-speed') === speed);
-    }
-  }
-
   function checkAchievements() {
-    var reached = [];
+    const reached = [];
     if (currentMax >= 65536 && !achievements['65536']) {
       achievements['65536'] = true;
       reached.push(65536);
@@ -459,11 +527,10 @@
   function finishGame() {
     if (gameOver) return;
     gameOver = true;
-    if (speed === 'extreme') renderBoard(false);
 
-    var previousBest = best;
-    var previousMax = bestMax;
-    var isRecord = score > previousBest || currentMax > previousMax;
+    const previousBest = best;
+    const previousMax = bestMax;
+    const isRecord = score > previousBest || currentMax > previousMax;
     if (score > best) best = score;
     if (currentMax > bestMax) bestMax = currentMax;
     if (score > previousBest || currentMax > previousMax) saveBest();
@@ -489,7 +556,7 @@
       return;
     }
 
-    var delay = speed === 'extreme' ? 150 : 700;
+    const delay = speed >= 12 ? 300 : 700;
     autoTimer = setTimeout(function () {
       autoTimer = null;
       if (!running) return;
@@ -499,10 +566,15 @@
   }
 
   async function applyMove(direction) {
-    var result = Game.move(board, direction);
+    const result = Game.move(board, direction);
     if (!result.moved) return false;
 
-    var spawn = Game.addRandomTile(board);
+    // Apply the move first; spawning on the old board caused stale boards
+    // and a screen full of leftover "2" tiles.
+    board = result.board;
+
+    // Exactly one new tile per valid move (the initial board adds two).
+    const spawn = Game.addRandomTile(board);
     record.moves.push([
       DIR_INDEX[direction],
       spawn.tile ? spawn.cell.r * SIZE + spawn.cell.c : -1,
@@ -510,20 +582,14 @@
     ]);
 
     score += result.score;
-    var nextMax = Game.maxValue(board);
+    const nextMax = Game.maxValue(board);
     if (nextMax > currentMax) currentMax = nextMax;
     updateScores();
     checkAchievements();
 
-    if (speed === 'extreme') {
-      if (performance.now() - lastRender >= EXTREME_RENDER_MS) {
-        lastRender = performance.now();
-        renderBoard(false);
-      }
-    } else {
-      var duration = speed === 'normal' ? SLIDE_MS : FAST_SLIDE_MS;
-      await animateMove(result, spawn, duration, gameId);
-    }
+    const duration = SPEEDS[speed].anim;
+    await animateMove(result, spawn, duration, gameId);
+    verifyDom();
     return true;
   }
 
@@ -532,25 +598,22 @@
       if (gameOver) return;
       if (Game.isGameOver(board)) { finishGame(); return; }
 
-      var myGame = gameId;
-      var moveStart = performance.now();
-      var move;
+      const myGame = gameId;
+      const stepStart = performance.now();
+      let move;
       try {
         move = await ai.requestMove(board);
-      } catch (e) {
+      } catch (error) {
         if (id !== runId) return;
         aiReady = false;
         stopLoop();
-        setStatus('AI 服务错误：' + e.message, 'err');
+        setStatus('AI 服务错误：' + error.message, 'err');
         scheduleRetry();
         return;
       }
 
       if (myGame !== gameId) return;
-      if (!running || id !== runId) {
-        if (!gameOver && Game.isGameOver(board)) finishGame();
-        return;
-      }
+      if (!running || id !== runId) return;
       if (move === null) {
         if (Game.isGameOver(board)) { finishGame(); return; }
         stopLoop();
@@ -558,12 +621,9 @@
         return;
       }
 
-      var ok = await applyMove(move);
+      const ok = await applyMove(move);
       if (myGame !== gameId) return;
-      if (!running || id !== runId) {
-        if (!gameOver && Game.isGameOver(board)) finishGame();
-        return;
-      }
+      if (!running || id !== runId) return;
       if (!ok) {
         stopLoop();
         setStatus('AI 返回了无效动作，已暂停', 'err');
@@ -571,9 +631,9 @@
       }
       if (Game.isGameOver(board)) { finishGame(); return; }
 
-      var pace = speed === 'normal' ? NORMAL_PACE : (speed === 'fast' ? FAST_PACE : 0);
-      var elapsed = performance.now() - moveStart;
-      if (pace > 0 && elapsed < pace) await sleep(pace - elapsed);
+      const interval = SPEEDS[speed].interval;
+      const elapsed = performance.now() - stepStart;
+      if (elapsed < interval) await sleep(interval - elapsed);
     }
   }
 
@@ -583,7 +643,7 @@
   toggleBtn.addEventListener('click', toggleAI);
   restartBtn.addEventListener('click', restart);
   speedEl.addEventListener('click', function (event) {
-    var button = event.target.closest('button[data-speed]');
+    const button = event.target.closest('button[data-speed]');
     if (button) setSpeed(button.getAttribute('data-speed'));
   });
 
@@ -601,11 +661,11 @@
 
   replayLink.addEventListener('click', function (event) {
     event.preventDefault();
-    var raw = safeGet(REPLAY_KEY);
+    const raw = safeGet(REPLAY_KEY);
     if (!raw) return;
-    var blob = new Blob([raw], { type: 'application/json' });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement('a');
+    const blob = new Blob([raw], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
     a.href = url;
     a.download = '2048-ai-replay-' + Date.now() + '.json';
     document.body.appendChild(a);
@@ -616,15 +676,62 @@
 
   window.addEventListener('resize', function () {
     if (running) pauseAI();
+    finishPendingAnimation(true);
     measure();
     buildBackground();
-    renderBoard(false);
+    renderBoard();
   });
+
+  // Small read-only hook used by browser smoke tests.
+  window.__2048Debug = {
+    snapshot: function () {
+      const boardIds = expectedBoardIds();
+      const domIds = Array.prototype.map.call(
+        tileLayer.children,
+        function (el) { return el.dataset.id; }
+      );
+      const moveCount = record ? record.moves.length : 0;
+      const spawnCount = record
+        ? record.moves.filter(function (m) { return m[1] >= 0; }).length
+        : 0;
+      return {
+        board: Game.toNumbers(board),
+        score: score,
+        maxTile: currentMax,
+        best: best,
+        bestMax: bestMax,
+        running: running,
+        gameOver: gameOver,
+        hasStarted: hasStarted,
+        speed: speed,
+        aiReady: aiReady,
+        pendingAnimation: !!pendingAnimation,
+        loopActive: loopActive,
+        moveCount: moveCount,
+        spawnCount: spawnCount,
+        initialTiles: record
+          ? record.initial.reduce(function (sum, row) {
+              return sum + row.filter(function (v) { return v > 0; }).length;
+            }, 0)
+          : 0,
+        domTiles: domIds.length,
+        domIds: domIds,
+        boardIds: boardIds,
+        tileMapKeys: Object.keys(tileElements).length,
+        gamesPlayed: gamesPlayed,
+      };
+    },
+    start: toggleAI,
+    pause: pauseAI,
+    setSpeed: setSpeed,
+    verifyDom: verifyDom,
+  };
 
   // ------------------------------------------------------------------
   // Init
   // ------------------------------------------------------------------
   loadStore();
+  setSpeed(DEFAULT_SPEED);
   newGame();
   updateButton();
   checkAI();

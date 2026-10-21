@@ -115,6 +115,7 @@ body {
 .speed-label { font-weight: 700; opacity: 0.75; }
 .segmented {
   display: inline-flex;
+  flex-wrap: wrap;
   background: #d8cec4;
   border-radius: 8px;
   padding: 3px;
@@ -167,32 +168,11 @@ body {
   border-radius: 8px;
   color: var(--text);
   transform: translate(var(--tx), var(--ty));
-  transition: transform 0.12s ease-in-out;
+  transition: transform var(--tile-ms, 120ms) ease-in-out;
   box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12);
   user-select: none;
   will-change: transform;
 }
-
-@keyframes tile-pop {
-  0%   { transform: translate(var(--tx), var(--ty)) scale(0.25); }
-  60%  { transform: translate(var(--tx), var(--ty)) scale(1.1); }
-  100% { transform: translate(var(--tx), var(--ty)) scale(1); }
-}
-@keyframes tile-merge {
-  0%   { transform: translate(var(--tx), var(--ty)) scale(1); }
-  40%  { transform: translate(var(--tx), var(--ty)) scale(1.2); }
-  100% { transform: translate(var(--tx), var(--ty)) scale(1); }
-}
-.tile-new { animation: tile-pop 0.2s ease-out; }
-.tile-merge { animation: tile-merge 0.22s ease-out; }
-
-/* Speed modes */
-.board.speed-fast .tile { transition-duration: 0.045s; }
-.board.speed-fast .tile-new,
-.board.speed-fast .tile-merge { animation: none; }
-.board.speed-extreme .tile { transition: none; }
-.board.speed-extreme .tile-new,
-.board.speed-extreme .tile-merge { animation: none; }
 
 /* Tile colours */
 .tile-2     { background: #eee4da; }
@@ -303,6 +283,5 @@ body {
 
 @media (prefers-reduced-motion: reduce) {
   .tile { transition: none; }
-  .tile-new, .tile-merge { animation: none; }
   .overlay, .toast { transition: none; }
 }
