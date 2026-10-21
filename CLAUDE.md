@@ -9,6 +9,7 @@
 本地 2048 AI 展示项目：浏览器负责真实棋盘、移动、合并、生成、分数与动画；
 macroxue/2048-ai 的 C++ Expectimax 只负责给出走子建议；Node 页面服务负责静态文件
 和 `/move` 同源代理；AI 在 Docker 中运行。项目没有 `package.json`、npm 依赖或构建步骤。
+公开发布版本整体按 GPL-3.0 提供（包含 GPL-3.0 上游组件）。
 
 ## 架构速览
 
@@ -48,6 +49,8 @@ Docker 容器 2048-ai（C++ Expectimax，-d3，Tuple10/Tuple11 查找表）
 | `scripts/start.ps1` / `stop-ai.ps1` | 本地 Docker/页面服务启动与停止 |
 | `vendor/2048-ai/` | 固定上游版本、最小 C++ 构建、兼容补丁；核心算法不在此修改 |
 | `archives/challenge-65536/` | Git 管理的首次 65536 成功回放、最终报告、校验和 |
+| `docs/assets/` | 真实回放生成的 README 截图/GIF 及来源说明 |
+| `LICENSE` / `THIRD_PARTY_NOTICES.md` | GPL-3.0 与上游来源/修改说明 |
 | `test.js` | Node 单元测试（规则、AI 编码/客户端、服务器代理、回放） |
 | `docs/ARCHITECTURE.md` | 模块边界、协议、数据流、持久化 |
 | `docs/PROJECT_STATUS.md` | 当前功能、最近提交、验证结果、已知限制、后续候选 |
@@ -114,10 +117,15 @@ node scripts/challenge-65536.js --state reports/challenge-65536/test.json \
 8. **不提交敏感/大文件**：不写入 API Key、密钥、个人绝对路径；不提交查找表、
    `reports/`、日志或浏览器 profile。`archives/challenge-65536/` 的归档回放是
    明确例外，必须保留；不要删除 `reports/` 中的原始成功回放。
-9. **静态文件有白名单**：新增浏览器脚本/样式时，必须同时更新 `serve.js` 的
+9. **公开发布合规**：项目包含 GPL-3.0 上游代码，整体以 GPL-3.0 发布；保留
+   `LICENSE`、`vendor/2048-ai/LICENSE`、`THIRD_PARTY_NOTICES.md` 和来源说明。
+   不要删除上游版权/许可证，也不要在未获授权时改写 Git 历史或 push。
+10. **素材必须真实**：`docs/assets/` 的截图/GIF 必须来自归档真实回放和真实网页
+   界面；不得手绘、修改或合成棋盘/分数。回放模式显示的最高分为 0 是真实行为。
+11. **静态文件有白名单**：新增浏览器脚本/样式时，必须同时更新 `serve.js` 的
    `STATIC_FILES`，否则页面会 404。
-10. **文档以代码和 Git 为准**：不确定的内容不要编造；更新功能时同步更新本文件或
-    `docs/` 中受影响的部分。
+12. **文档以代码和 Git 为准**：不确定的内容不要编造；更新功能时同步更新本文件或
+   `docs/` 中受影响的部分。
 
 ## 完成标准
 
@@ -130,4 +138,6 @@ node scripts/challenge-65536.js --state reports/challenge-65536/test.json \
   以及成功回放的最终棋盘/得分/步数一致；不得用真实无限挑战做验收。
 - 归档/交接改动：验证 `archives/challenge-65536/` 回放可重建并与原始文件一致；
   用 Headless Edge 导入；不要删除原始 `reports/` 回放或查找表。
+- 公开素材/发布改动：检查 `README` 相对路径、`LICENSE`/第三方声明和敏感信息；
+  不要伪造截图/GIF，不要在未获用户确认时 push 或改写历史。
 - 工作区干净，提交信息说明用户可见行为与验证结果。

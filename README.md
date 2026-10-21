@@ -1,38 +1,103 @@
 # 2048 AI Showcase
 
-A clean, local 2048 auto-play showcase using the original web UI style and the
-high-performance C++ AI from
-[macroxue/2048-ai](https://github.com/macroxue/2048-ai).
+A local, browser-based 2048 auto-play showcase powered by the C++ Expectimax AI
+from [macroxue/2048-ai](https://github.com/macroxue/2048-ai).
 
-The browser owns the real game: board, moves, merges, spawning, score, and
-record. A small Node server serves the page and proxies move requests to the AI
-service running in Docker.
+The browser owns the real game — board, moves, merges, spawning, score, and
+replay. A dependency-free Node.js server serves the page and proxies move
+requests to the AI running in Docker. The AI only suggests a move; it never
+invents or edits the displayed game state.
 
-Project documentation:
+![2048 AI replay demo](docs/assets/game-demo.gif)
 
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — modules, protocols, data flow.
-- [`docs/PROJECT_STATUS.md`](docs/PROJECT_STATUS.md) — verified features, test
-  results, fixes, limitations, and candidate next work.
-- [`docs/HANDOFF.md`](docs/HANDOFF.md) — concise handoff for a new session.
-- [`CLAUDE.md`](CLAUDE.md) — concise working rules and commands for new Claude
-  Code sessions.
+*Real replay frames from the archived seed-411789 game (steps 29,323–29,883,
+shown at about 10 fps). The 65536 tile first appears at step 29,823.*
 
-## Quick start (Windows)
+## Highlights
 
-Prerequisites: Docker Desktop and Node.js are installed. The first start needs
-about **5 GB RAM** and **3 GB disk** for the AI lookup tables.
+- **Real 2048 rules** in the browser: 4×4 board, one merge per move, and one
+  spawned tile per valid move (90% / 10% for 2 / 4).
+- **C++ Expectimax AI** with Tuple10/Tuple11 lookup tables, running locally in
+  Docker at search depth 3.
+- **Strictly serial AI playback**: request → move → spawn → animate → verify
+  DOM → wait. No hundreds-of-moves-per-second visual updates.
+- **Replay viewer**: import a version-1 JSON replay, open at the final board,
+  seek, step, play, pause, and change speed without calling the AI.
+- **Background tooling**: unit and Headless Edge tests, batch benchmarks, JSON
+  replay export, and a resumable parallel 65536 challenge.
+- **No neural network or reinforcement-learning model.** The move policy is
+  Expectimax over the real game tree with precomputed tuple tables.
+
+## Real 65536 result
+
+| Metric | Value |
+|--------|-------|
+| Seed | **411789** |
+| Final score | **1,148,460** |
+| Max tile | **65536** |
+| Full game length | **37,257** moves |
+| Total attempts | **56** games |
+| First 65536 | Step **29,823** |
+
+![First 65536 tile in the real replay](docs/assets/65536-achievement.png)
+
+*The first 65536 state from the real archived replay. The score at this moment
+is 971,264; the game continued to 1,148,460 and ended naturally.*
+
+The complete replay is tracked in Git:
+
+- [`archives/challenge-65536/game-053-seed-411789.json`](archives/challenge-65536/game-053-seed-411789.json)
+- [Provenance, checksums, and final board](archives/challenge-65536/README.md)
+
+The original copy remains in `reports/challenge-65536/` and is intentionally
+ignored by Git. The archived replay reconstructs to the recorded final board,
+score, max tile, and step count, and passes Headless Edge import/seeking.
+
+## How it works
+
+```text
+Browser
+  index.html / style.css / main.js / game.js / replay.js / ai-client.js
+        |
+        |  GET /move?board=<16 tile ranks>
+        v
+  serve.js (Node.js, port 8000)
+        |  static whitelist + same-origin proxy
+        v
+  Docker container 2048-ai (port 8080)
+        |  Expectimax, depth 3, Tuple10/Tuple11 tables
+```
+
+- Board encoding: row-major ranks, `0` empty, `1`=2, `2`=4, …, `15`=32768,
+  `G`=65536.
+- AI replies: `u` / `l` / `r` / `d`, or `g` for game over.
+- The browser applies the move and performs exactly one spawn; all scores are
+  produced by the real web game.
+- Replay files contain the initial board, every move direction, every spawned
+  tile position/value, and the final score/max tile. The final board is rebuilt
+  from those records during import.
+
+## Quick start
+
+### Requirements
+
+- Docker Desktop (Windows/macOS) or Docker Engine (Linux)
+- Node.js (tested with Node 24; no npm dependencies)
+- Microsoft Edge only for the optional Headless browser tests
+
+The first AI start needs about **5 GB RAM** and **3 GB disk** for generated
+lookup tables. Table generation takes roughly 4–8 minutes on the first run.
+Later starts reuse `vendor/2048-ai/tables/`.
+
+### Windows
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\start.ps1
 ```
 
-The script:
-
-1. starts Docker Desktop if necessary;
-2. builds the small upstream AI image if needed;
-3. starts the local AI container on port `8080`;
-4. generates the lookup tables on the very first run (about 4–8 minutes);
-5. starts the page server and opens <http://localhost:8000>.
+The script starts Docker if needed, builds the small AI image, starts the
+container on port 8080, generates the tables on first use, starts the page
+server, and opens <http://localhost:8000>.
 
 For background/manual startup without opening a browser:
 
@@ -40,10 +105,7 @@ For background/manual startup without opening a browser:
 powershell -ExecutionPolicy Bypass -File scripts\start.ps1 -NoBrowser
 ```
 
-`-NoBrowser` also starts the Node page server hidden if it is not running.
-The default command still opens the browser for normal manual play.
-
-Click **AI 开始** to start auto-play. To stop the background services:
+Stop the local services with:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\stop-ai.ps1
@@ -51,276 +113,37 @@ powershell -ExecutionPolicy Bypass -File scripts\stop-ai.ps1
 
 ### Manual commands
 
-```powershell
+```bash
 docker build -t 2048-ai-small vendor/2048-ai
-docker run -d --name 2048-ai -p 8080:8080 -v "${PWD}/vendor/2048-ai/tables:/data" 2048-ai-small
+docker run -d --name 2048-ai -p 8080:8080 \
+  -v "$PWD/vendor/2048-ai/tables:/data" 2048-ai-small
 node serve.js
 ```
 
-Open <http://localhost:8000>. If the AI service is not ready, the page shows a
-connection status; it does not silently fall back to a weaker AI.
+Open <http://localhost:8000>. If the AI service is unavailable, the page shows
+an explicit connection error and retries; it does not silently fall back to a
+weaker AI.
 
-## Features
+## Using the showcase
 
-- Original 2048 board, colours, layout, and slide animation.
-- AI 开始 / 暂停 / 继续; restart.
-- **Strictly serial AI steps**:
-  - request one decision → apply one move → spawn exactly one tile →
-    finish the board render → verify DOM/board consistency → wait.
-  - playback options **3 / 5 / 8 / 12 / 20 moves per second**; default **8**.
-  - pause finishes the current render and stops before the next step; resume
-    continues the same game.
-- Current score, best score, current max tile, historical max tile.
-- **Game over keeps the final board**: AI movement stops immediately, the board
-  stays visible, and a banner shows final score, max tile, and move count.
-  **下一局** starts the next game manually.
-- **自动连续挑战** switch (default **off**). When enabled, the final board and
-  result stay for about **3.5 s** (at least 3 s), then the next game starts.
-  Pause during that wait cancels the automatic next game. One session is capped
-  at **500 games**.
-- Achievements at **32768** and **65536** (localStorage, toast notification,
-  and a persistent achievement label in the final banner).
-- **Replay import**: load a replay JSON, open directly at the final board, then
-  play/pause, step forward/back, jump to start/end, drag the progress slider,
-  change replay speed, or exit. The final board remains when playback reaches
-  the end.
-- Best-game replay record: initial board + every move + every spawned tile,
-  saved in localStorage and downloadable from the footer. It is enough to
-  replay and verify a record game.
-- All high scores come from real games; replay viewing never updates the best
-  score/history and never requests the AI.
-- No rule, spawn probability, or starting board modifications.
+- Click **AI 开始** to start auto-play.
+- Playback speeds: **3 / 5 / 8 / 12 / 20 moves per second** (default 8).
+- **AI 暂停** stops before the next step; **AI 继续** resumes the same game.
+- Game over keeps the final board and shows the final score, max tile, and move
+  count. **下一局** starts a new game.
+- **自动连续挑战** is off by default; when enabled, it waits about 3.5 seconds
+  and starts the next game, capped at 500 games per session.
+- Achievements at 32768 and 65536 are stored in browser localStorage.
 
-## Replay import and viewing
+### View the archived 65536 replay
 
-Click **导入回放**, choose a JSON file downloaded by this project. The replay
-opens at the **last move** by default; use ◀ / ▶, start/end, the slider, or the
-play button to inspect any step. Replaying uses only the recorded moves and
-spawned tiles; it never re-randomizes tiles or calls the AI.
+1. Start the page (the `-NoBrowser` option is fine).
+2. Open <http://localhost:8000>.
+3. Click **导入回放**.
+4. Choose `archives/challenge-65536/game-053-seed-411789.json`.
 
-Supported format (version 1):
-
-```json
-{
-  "version": 1,
-  "initial": [[2,0,0,0],[2,0,0,0],[0,0,0,0],[0,0,0,0]],
-  "moves": [[0, 12, 4], [1, 0, 2]],
-  "score": 12,
-  "maxTile": 8,
-  "finishedAt": "2026-10-21T00:00:00.000Z"
-}
-```
-
-- `direction`: `0=up, 1=right, 2=down, 3=left`
-- `spawnIndex`: row-major flat index `0..15` (or `-1`/`0` for a legacy no-spawn entry)
-- `spawnValue`: `2` or `4`
-
-The importer validates the initial board, every move, every spawn cell and
-value, and the final score/max. Invalid files show a clear message and leave
-the page usable. Import stops any live AI session, timers, and in-flight
-animation/request. The file is read-only; replay does not modify it.
-
-Replay seeking uses snapshots every 100 moves. For a 7,164-move replay this
-means 73 snapshots; a random seek applies at most 99 recorded moves and is
-fast enough for continuous slider dragging.
-
-## Architecture
-
-```
-Browser
-  index.html / main.js / game.js / ai-client.js
-        |  /move?board=<16 chars>
-        v
-  serve.js (Node, port 8000)
-        |  proxy
-        v
-  Docker: macroxue/2048-ai C++ server (port 8080)
-        |  Expectimax + precomputed lookup tables
-```
-
-- Board encoding: row-major tile ranks, `0` empty, `1`=2, `2`=4, …,
-  `15`=32768, `G`=65536.
-- Server reply: `u` / `l` / `r` / `d`, or `g` for game over.
-- The web game and the AI use the same standard 2048 rules and 90% / 10% spawn
-  probabilities. The AI only suggests moves; the browser performs the actual
-  move and spawn, so all displayed scores come from the real web game.
-
-## Upstream
-
-- Repository: <https://github.com/macroxue/2048-ai>
-- Pinned commit: `fee3359d06cda82cb20a36ce312b06209ca1baad`
-- License: **GPL-3.0** — see `vendor/2048-ai/LICENSE`; the vendored AI
-  component is GPL-3.0.
-- The small `2048` build is used (not the 27 GB `2048b` build).
-- A minimal local patch in `2048.cc` changes HTTP response line endings to
-  CRLF so browser/Node `fetch` accepts the server response; HTTP/1.1
-  keep-alive remains enabled. The algorithm and tables are unchanged.
-- The generated lookup tables are about **2.5 GB** and are excluded from Git
-  (`vendor/2048-ai/tables/`, `*.log`).
-
-### Verified games
-
-Direct upstream game (`./2048 -d3 -i1 2050`) on this machine:
-
-- score **1,133,392**
-- max tile **65536**
-- 36,430 moves
-- 107.1 s, about **340 moves/s**
-
-End-to-end web path (`game.js` + `ai-client.js` + Node proxy + Docker,
-depth 3), four real games:
-
-| game | score | max tile | moves | time | moves/s |
-|------|-------|----------|-------|------|---------|
-| 1 | 32,632 | 2048 | 1,680 | 5.4 s | 308 |
-| 2 | 488,656 | 32768 | 16,755 | 19.5 s | 859 |
-| 3 | 677,576 | 32768 | 23,216 | 21.9 s | 1,062 |
-| 4 | 610,000 | 32768 | 21,427 | 19.7 s | 1,090 |
-
-- 4-game average score: about **452,216**; 3/4 reached 32768; 0/4 reached 65536
-  in this small sample. This is consistent with the upstream small-build
-  1000-game depth-3 statistics (about 417k average, 37.8% 32768, 1.0% 65536),
-  which are the better reference; a 4-game sample is not a statistical claim.
-- The separate direct CLI game above did reach 65536.
-- The table measures the **AI engine/proxy in a headless loop**, not the web
-  playback rate. The web UI is deliberately strictly serial and capped at
-  **3–20 moves/s** (default 8); it never plays at hundreds of moves/s.
-- Browser verification (real Edge page, CDP):
-  - default 8/s produced 8 moves in 1 s;
-  - 5/s produced 6 moves in 1.2 s; 20/s produced 20 moves in 1 s;
-  - 3/s produced about 5 moves in 1.5 s;
-  - 12/s produced 15 moves in 1.2 s on a fresh board; one harder-board segment
-    was slower because the serial AI decision took longer (the selected rate is
-    an upper bound; decision quality is not traded for playback rate);
-  - pause produced zero moves over the next 1 s; resume continued;
-  - 62 moves produced exactly 62 spawned tiles;
-  - after each settled step, DOM tile count/ids/values matched the logical
-    board; no residual, duplicate, or pending animation state.
-  - game-over with auto-continue off kept the final board for >4 s and did not
-    advance the game count;
-  - auto-continue on kept the final board at 3 s and started the next game by
-    4.2 s; pausing during the wait prevented the automatic next game;
-  - a real **7,164-step / 171,828-point / 8192-tile** replay imported straight
-    to its final board; previous/start/middle/end seeks matched the recorded
-    score and board; slider drag, 20-step/s play, auto-pause at the end, fast
-    drag, and exit all worked; importing an invalid file showed a clear error
-    and left the page in normal mode.
-
-## Background testing (default)
-
-All test entries are terminal/background by default:
-
-```bash
-node test.js                       # unit tests only, terminal
-node scripts/browser-test.js       # Headless Edge, no visible window
-node scripts/test-all.js           # unit tests, then Headless Edge
-```
-
-- The browser test launches Headless Edge with `--headless=new`, no visible
-  window, no focus stealing, and closes it itself. It does not open an external
-  browser at the end.
-- `--replay=PATH` additionally validates a real replay file in Headless Edge:
-  opening at the final board, start/middle/end seeks, and exit.
-- `--visible` is the only way to launch a visible Edge; it is opt-in only and
-  is not used by default.
-- The suite covers board rules, merge/score behaviour, spawn rules, game-over
-  detection, AI board encoding (including `65536 -> G`), reply mapping, the
-  static server/`/move` proxy, replay-record reconstruction, and replay JSON
-  validation/seeking (first/middle/final states, invalid moves, occupied spawn
-  cells, score/max mismatches, and read-only input).
-
-## Background AI benchmark
-
-This does not use a browser or DOM. It plays full games through the same
-`game.js` rules and the existing C++ `/move` endpoint:
-
-```bash
-node scripts/ai-benchmark.js --games 10
-node scripts/ai-benchmark.js --games 100 --seed 7
-node scripts/ai-benchmark.js --games 500 --out reports/run-500
-```
-
-- Default is **1 game**; large runs are never started automatically.
-- `--games N`: number of games (10, 100, 500, …).
-- `--seed S`: reproducible seeded spawns (per game seed is derived from S).
-- `--max-moves N`: safety cap per game (default 100,000).
-- `--endpoint URL`: AI `/move` endpoint (default `http://127.0.0.1:8080/move`).
-- `--out PATH`: report base path; default `reports/ai-benchmark-<timestamp>`.
-- Every game automatically writes a complete **version-1 replay** to
-  `reports/replays/game-NNN-seed-S.json` (initial board, every move direction,
-  every spawned tile position/value, final score and max tile). The format is
-  exactly the one accepted by the page's **导入回放** importer, so the file can
-  be imported directly and opens on its final board. Existing files are never
-  overwritten: a repeated run gets a `-1`, `-2`, … suffix. The replay path for
-  each game is printed in the terminal and stored as `replayFile` in the JSON
-  report; `replayDirectory` is stored on the report as well. Replays are under
-  `reports/`, which Git ignores.
-
-Each game records score, max tile, steps, seconds, moves/s, ended/truncated.
-The summary includes average/best score, max tile distribution, achievement
-rates for 2048 / 4096 / 8192 / 16384 / 32768 / 65536, average steps/time, and
-overall throughput. Results are written as both JSON and CSV under `reports/`
-(ignored by Git). `scripts/benchmark.js` remains a compatibility wrapper for
-the same command.
-
-Example verified small run (`--games 3 --seed 1`): 3/3 games completed, average
-558,009 points, all reached 32768, 626 moves/s. This is a 3-game sample, not a
-statistical claim.
-
-## 65536 background challenge
-
-Repeatedly plays seeded games through the local AI until one game reaches
-**65536 and then ends naturally**. Reaching 65536 does not stop that game; it
-must continue to Game Over.
-
-```powershell
-# Start a new challenge (default target: 65536, concurrency: 2)
-node scripts/challenge-65536.js
-
-# Resume the same challenge (same state path)
-node scripts/challenge-65536.js
-
-# Start a separate challenge / different seed
-node scripts/challenge-65536.js --state reports/challenge-65536/run-2.json --seed 7
-```
-
-- Default concurrency is **2** (safe for the thread-per-connection C++ server);
-  `--concurrency` allows 1–4. `--seed` starts a different seed sequence.
-- Progress and the resumable checkpoint/report are kept in
-  `reports/challenge-65536/state.json` (or `--state PATH`). It is updated after
-  every completed game; completed indices/seeds are skipped on resume.
-- Each completed game prints a short line. Reaching the target also prints a
-  “continuing until natural game over” line.
-- **Ctrl+C** saves the checkpoint and exits; rerun the same command to resume.
-  In-flight games are not counted as completed and are retried.
-- On success, the challenge verifies the final board/score/max/steps, saves one
-  complete version-1 replay next to the state file, prints score, max tile,
-  steps, seed, total attempts, and the replay path, then stops other games.
-- Games that do not reach the target keep only compact statistics in the state
-  report; they do not create replay files. No existing replay or report is
-  deleted.
-- **Testing/sampling flags:** `--max-games N` bounds the number of completed
-  games (`0` = unlimited), and `--target-tile N` lowers the target to exercise
-  the success path quickly. The default target remains 65536.
-- Open the printed replay with **导入回放** in the page. It opens at the final
-  board and supports full playback.
-
-`scripts/challenge-65536.js` reuses `scripts/ai-benchmark.js` and `game.js`;
-the AI algorithm, Docker configuration, and web UI are unchanged. It is not
-started by `test-all.js`; use `--max-games` for bounded acceptance runs.
-
-### First successful 65536 game
-
-- Seed **411789**, final score **1,148,460**, max tile **65536**, **37,257**
-  steps, **56** total attempts.
-- Git-tracked archive:
-  [`archives/challenge-65536/game-053-seed-411789.json`](archives/challenge-65536/game-053-seed-411789.json)
-- Original (kept, Git-ignored):
-  `reports/challenge-65536/game-053-seed-411789.json`
-- The archived replay reconstructs to the recorded final board/score/steps and
-  passes Headless Edge import/seeking. Use **导入回放** to view it.
-- Provenance and checksums:
-  [`archives/challenge-65536/README.md`](archives/challenge-65536/README.md).
+The replay opens at its final board. Use the controls to go to the start, seek,
+play, pause, or inspect the first 65536 at step 29,823.
 
 ## Tests
 
@@ -330,43 +153,119 @@ node scripts/browser-test.js
 node scripts/test-all.js
 ```
 
-The browser test above uses Headless Edge by default; no visible browser
-window is created. All browser checks described earlier were also run via CDP.
-The unit suite also covers the benchmark's abortable game loop and replay
-final-board reconstruction.
+- `node test.js`: 25 unit tests covering rules, spawn behavior, AI protocol,
+  static server/proxy, replay validation/seeking, and the abortable benchmark
+  loop. No Docker required.
+- `node scripts/test-all.js`: unit tests followed by a Headless Edge test.
+  Edge and the local AI service are required.
+- Browser tests never open a visible window by default; `--visible` is opt-in.
+- A real replay can be validated in Headless Edge:
 
-## Files
-
-```
-index.html / style.css / main.js / game.js   web game and AI controller
-replay.js                                    replay validation + snapshot seeking
-ai-client.js                                 board encoding + AI HTTP client
-serve.js                                     static server + AI proxy
-scripts/start.ps1 / stop-ai.ps1              one-command local startup/stop
-scripts/ai-benchmark.js                      headless batch AI benchmark + JSON/CSV + replays
-scripts/challenge-65536.js                   resumable background 65536 challenge
-archives/challenge-65536/                    Git-tracked 65536 success replay + report
-scripts/benchmark.js                         compatibility wrapper for ai-benchmark.js
-scripts/browser-test.js                      Headless Edge smoke test (no visible window)
-scripts/test-all.js                          unit tests + Headless Edge
-vendor/2048-ai/                              pinned upstream source + Dockerfile
-vendor/2048-ai/tables/                       generated, ignored (about 2.5 GB)
-test.js                                      Node test suite
+```bash
+node scripts/browser-test.js --replay=archives/challenge-65536/game-053-seed-411789.json
 ```
 
-## Notes and limitations
+The archived replay was verified with 37,257 moves and the recorded final score,
+max tile, and board.
 
-- This is a **local** AI service, not a hosted/cloud game. Docker must be
-  running. A pure-WASM build is not practical: the strong small build needs
-  about 5 GB of lookup-table memory, beyond the browser wasm32 address space.
-  Dropping those tables would produce a clearly weaker AI, which was not
-  acceptable for this project.
-- Search depth is fixed by the container command (`-d3`). Change
-  `scripts/start.ps1` / the Dockerfile command to use another depth and restart
-  the container; the UI does not expose a depth slider because a runtime
-  restart would be required.
-- The first table generation is long; later starts reuse `tables/`.
-- One session auto-continues up to 500 games. Pause stops the loop and the
-  automatic next game; the page does not start AI compute on load.
-- High-score/replay records are stored in the browser's localStorage. They are
-  not uploaded anywhere.
+## Batch benchmark
+
+```bash
+node scripts/ai-benchmark.js --games 10 --seed 7
+node scripts/ai-benchmark.js --games 100 --out reports/run-100
+```
+
+- Default is **1 game**; long runs are never started automatically.
+- Reuses `game.js` and the same local `/move` endpoint, with no browser or DOM.
+- Writes JSON/CSV summaries under `reports/` (Git-ignored).
+- Exports a complete replay for every game to `reports/replays/`, with
+  collision-safe filenames and full score/max/step metadata.
+- The engine/proxy has exceeded 1,000 moves/s in headless runs; the web UI is
+  deliberately capped at 20 moves/s for readable serial playback.
+
+## 65536 challenge
+
+```bash
+# Start or resume the default challenge
+node scripts/challenge-65536.js
+
+# A separate challenge with another state file and seed
+node scripts/challenge-65536.js \
+  --state reports/challenge-65536/run-2.json --seed 7
+```
+
+- Default concurrency is **2** (1–4 allowed), chosen to avoid contention in the
+  shared C++ lookup tables.
+- A game succeeds only after reaching 65536 **and** ending naturally. It keeps
+  playing after 65536 until Game Over; truncation is not success.
+- State/report: `reports/challenge-65536/state.json`, updated after each game.
+  Ctrl+C saves progress; rerun the same command to resume without repeating
+  completed indices.
+- Unsuccessful games store only compact statistics. On success, the full replay
+  is verified and saved; existing files are never deleted.
+- For bounded testing only: `--max-games N` limits completed games and
+  `--target-tile N` lowers the target. The default target remains 65536.
+
+The first real success is archived under `archives/challenge-65536/`.
+
+## Project layout
+
+```text
+index.html / style.css              page layout and styling
+main.js                             AI state machine, animation, replay UI
+game.js                             pure 2048 rules (browser + Node)
+replay.js                           replay validation and snapshot seeking
+ai-client.js                        board encoding and AI HTTP client
+serve.js                            static file whitelist + /move proxy
+test.js                             25 Node unit tests
+scripts/
+  start.ps1 / stop-ai.ps1           local Docker/page-service control
+  browser-test.js                   Headless Edge + CDP checks
+  test-all.js                       unit tests, then Headless Edge
+  ai-benchmark.js                   batch benchmark + JSON/CSV + replays
+  challenge-65536.js                resumable parallel 65536 challenge
+archives/challenge-65536/           Git-tracked success replay + final report
+docs/                               architecture, status, handoff
+docs/assets/                        GIF/screenshot used by this README
+LICENSE / THIRD_PARTY_NOTICES.md     GPL-3.0 and upstream attribution
+vendor/2048-ai/                     pinned upstream source, Dockerfile, license
+reports/                            local reports/replays, Git-ignored
+```
+
+## Documentation
+
+- [Architecture and data flows](docs/ARCHITECTURE.md)
+- [Project status, tests, and limitations](docs/PROJECT_STATUS.md)
+- [New-session handoff](docs/HANDOFF.md)
+- [Archived 65536 game](archives/challenge-65536/README.md)
+- [Screenshot/GIF provenance](docs/assets/README.md)
+- [Working notes for Claude Code](CLAUDE.md)
+
+The documentation under `docs/` is primarily in Chinese; the UI is Chinese as
+well. This README is the English entry point for international readers.
+
+## Security and local-only operation
+
+- No API keys, tokens, passwords, or cloud credentials are required or included.
+- The page server and AI service have no authentication and are intended for
+  local use only. Do not expose ports 8000 or 8080 to an untrusted network.
+- Generated AI lookup tables, reports, logs, browser profiles, and local
+  configuration are Git-ignored.
+- The 65536 success replay is the only intentionally tracked replay artifact.
+
+## License and credits
+
+This repository includes and builds GPL-3.0 code from
+[macroxue/2048-ai](https://github.com/macroxue/2048-ai), pinned at commit
+`fee3359d06cda82cb20a36ce312b06209ca1baad`. The combined distribution is provided
+under the **GNU General Public License v3.0**; see [`LICENSE`](LICENSE) and
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+
+The upstream Expectimax algorithm, rules, and lookup-table format are unchanged.
+A small local HTTP compatibility patch changes response line endings to CRLF and
+keeps HTTP/1.1 keep-alive enabled. The generated tables are not committed; the
+complete source and Dockerfile needed to regenerate them are in
+`vendor/2048-ai/`.
+
+Thanks to the upstream author for the high-performance 2048 AI and to the
+original 2048 game design by Gabriele Cirulli.

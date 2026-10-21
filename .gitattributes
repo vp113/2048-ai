@@ -1,2 +1,6 @@
 # Preserve archived evidence byte-for-byte across Windows checkouts.
 archives/** -text
+
+# Documentation media is binary.
+*.png binary
+*.gif binary

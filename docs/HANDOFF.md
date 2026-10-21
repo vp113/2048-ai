@@ -2,7 +2,7 @@
 
 - 日期：2026-10-21
 - 分支：`main`
-- 项目状态：开发阶段收尾，功能稳定，无已知阻塞问题。
+- 项目状态：开发完成，公开材料已本地整理；尚未创建 GitHub 仓库，尚未 push。
 - 起点文档：本文件 → `CLAUDE.md` → `docs/PROJECT_STATUS.md` → `docs/ARCHITECTURE.md`。
 
 ## 1. 一句话说明
@@ -27,6 +27,8 @@ scripts/challenge-65536.js             可恢复、并行的 65536 挑战
 test.js                                25 项 Node 单元测试
 vendor/2048-ai/                        固定上游源码、最小 Docker 构建、兼容补丁
 archives/challenge-65536/              首次成功 65536 回放 + 最终报告（Git 管理）
+docs/assets/                           README 演示 GIF、65536 截图、素材来源
+LICENSE / THIRD_PARTY_NOTICES.md        GPL-3.0 与上游来源/修改说明
 reports/                               本地报告/回放（Git 忽略，不要删除）
 docs/                                  架构、状态、交接文档
 ```
@@ -112,7 +114,21 @@ reports/challenge-65536/state.json                   原始最终报告，保留
 
 不得删除或改写归档回放；它是项目最终成果的可验证记录。
 
-## 7. 继续开发时的检查清单
+## 7. 公开材料与发布状态
+
+- `README.md` 已整理为英文 GitHub 首页，嵌入：
+  - `docs/assets/game-demo.gif`：真实回放 29,323–29,883 步，113 帧，13.2 秒，
+    约 8.2 MB；
+  - `docs/assets/65536-achievement.png`：首次 65536 的第 29,823 步，分数 971,264。
+- 素材来源、真实验证和裁切说明见 `docs/assets/README.md`。
+- 根目录 `LICENSE` 为 GPL-3.0；`THIRD_PARTY_NOTICES.md` 记录上游和本地修改。
+- `.gitignore` 已覆盖查找表、报告、日志、缓存、npm 依赖、`.env`、临时文件和
+  Docker/Edge 本地数据。
+- 全历史安全扫描未发现密钥/Token/密码；但提交 author/committer 元数据包含个人
+  姓名和邮箱。**发布前需要仓库所有者决定邮箱处理方式；不要擅自改写历史。**
+- 尚未创建 GitHub 仓库、尚未 push。得到明确确认后再执行。
+
+## 8. 继续开发时的检查清单
 
 1. 读 `CLAUDE.md`，查看 `git status`、`git log -5`，不要假设历史会话状态。
 2. 检查 Docker/AI 是否可用；必要时运行 `scripts/start.ps1 -NoBrowser`。
@@ -124,7 +140,7 @@ reports/challenge-65536/state.json                   原始最终报告，保留
 7. 完成后提交 Git，保持工作区干净；`reports/` 不提交，`archives/` 保留。
 8. 新功能/限制变化时同步更新 `README.md`、`CLAUDE.md`、`docs/`。
 
-## 8. 已知限制
+## 9. 已知限制
 
 - 本地 Docker 是硬依赖；首次生成查找表较慢。
 - 搜索深度固定为 `-d3`；UI 不提供深度切换。

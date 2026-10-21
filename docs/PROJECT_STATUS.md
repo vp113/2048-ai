@@ -241,7 +241,48 @@ node scripts/challenge-65536.js --state reports/challenge-65536/run-2.json
   单元测试不依赖 Docker。
 - 没有持续 CI 流水线；当前测试结果为本地/后台手动运行结果。
 
-## 6. 下一步可能开展（候选，不是承诺）
+## 6. 开源发布准备（2026-10-21）
+
+### 安全检查
+
+- 已扫描全部 tracked 文件与 17 个提交的完整历史，检查 API Key、Token、密码、
+  私钥、云凭据、已知个人路径等模式；**未发现密钥/Token/密码泄漏**。
+- **风险提示**：所有 Git 提交的 author/committer 元数据包含同一个个人姓名和邮箱。
+  公开 push 会公开这些信息；本次没有改写历史。发布前应由仓库所有者决定使用
+  GitHub noreply 邮箱、接受当前元数据，或另行授权处理历史。
+- `.gitignore` 已补充 `node_modules/`、`coverage/`、`dist/`、`.cache/`、`.env*`、
+  `*.pem`、`*.key`、`*.tmp`、OS/编辑器文件、Docker/Edge 本地数据；原有的
+  `reports/`、日志、查找表和构建产物规则保留。
+- 页面/AI 服务无认证，仅用于本地；README 已加入不要暴露端口的说明。
+
+### 许可证合规
+
+- 新增根目录 `LICENSE`（GPL-3.0），保留上游 `vendor/2048-ai/LICENSE`。
+- 新增 `THIRD_PARTY_NOTICES.md`，记录上游仓库、固定提交、版权归属、GPL-3.0、
+  本地 CRLF 兼容修改，以及“源码随仓库提供、查找表本地生成”的分发说明。
+- 项目包含并构建 GPL-3.0 上游代码，因此合并分发按 GPL-3.0 提供。
+
+### 展示素材
+
+- `docs/assets/65536-achievement.png`：真实网页回放第 **29,823** 步，首次 65536，
+  该时刻分数 **971,264**，最大方块 **65,536**；裁切自真实页面头部和棋盘。
+- `docs/assets/game-demo.gif`：同一归档回放第 **29,323–29,883** 步，每 5 步取一帧，
+  113 帧，约 10 fps，末帧停留 2 s，总时长 **13.2 s**，640×711，约 **8.2 MB**。
+- 素材来源与验证记录在 `docs/assets/README.md`；没有手工改棋盘、分数或 AI 结果。
+- 素材文件可正常打开：PNG 为 1080×1200，GIF 为 113 帧/640×711；README 相对路径
+  和文档链接已检查。
+- README 已重写为英文 GitHub 首页，包含 GIF、截图、真实结果、架构、快速开始、
+  测试、基准、挑战、回放导入、项目结构、许可证和上游致谢；保留中文文档入口。
+- 最终测试：`node test.js` 25/25 通过，`node scripts/test-all.js` 通过
+  （Headless Edge）；归档回放 37,257 步导入/seek 通过。
+
+### 发布边界
+
+- 本次没有创建 GitHub 仓库、没有 `git push`、没有删除 AI 查找表或原始回放，
+  也没有改写 Git 历史。
+- 除上述 author 邮箱暴露外，当前没有发现阻止公开发布的技术或合规问题。
+
+## 7. 下一步可能开展（候选，不是承诺）
 
 1. 增加独立的回放校验 CLI，批量检查基准/挑战回放的格式、最终分数/棋盘一致性。
 2. 为大批量基准提供回放压缩/归档或清理工具，避免 500 局产生过多文件。
@@ -253,7 +294,7 @@ node scripts/challenge-65536.js --state reports/challenge-65536/run-2.json
 不建议的方向：重新引入 DQN/旧 Python RL、改用无查找表的弱 AI、为速度牺牲规则正确性、
 未经验证地修改 macroxue 核心算法或查找表。
 
-## 7. 新会话继续开发
+## 8. 新会话继续开发
 
 1. 先读 `CLAUDE.md` 和 `docs/HANDOFF.md`，再按需读本文件和
    `docs/ARCHITECTURE.md`。

@@ -303,6 +303,9 @@ reports/challenge-65536/state.json
 - 首个真实成功局已从 `reports/challenge-65536/` 复制到 Git 管理的
   `archives/challenge-65536/`（回放 + 最终报告 + 校验和）。原始回放仍保留；
   归档文件不应改写或删除。
+- README 展示素材同样来自该归档回放：截图对应第 29,823 步（首次 65536，分数
+  971,264）；GIF 取第 29,323–29,883 步的真实网页状态。素材没有手工修改棋盘或
+  分数，详细来源见 `docs/assets/README.md`。
 
 ### 7.5 常用选项
 
@@ -405,3 +408,15 @@ node scripts/challenge-65536.js --state reports/challenge-65536/test.json `
 - 页面服务器只提供白名单文件，不提供任意路径访问。
 - AI 服务不保存/回传棋盘状态，只接收编码棋盘并返回一步建议。
 - 搜索深度由容器命令固定为 `-d3`；当前 UI 不提供深度切换。
+- `.gitignore` 排除查找表、`reports/`、日志、临时文件、缓存、本地环境文件和
+  Docker/Edge 运行数据；`archives/challenge-65536/` 是有意纳入 Git 的例外。
+
+## 12. 公开发布与许可证
+
+- 根目录 `LICENSE` 为 GPL-3.0；`vendor/2048-ai/LICENSE` 保留上游许可证原文。
+- `THIRD_PARTY_NOTICES.md` 记录上游仓库、固定提交、GPL-3.0、版权归属、本地修改
+  和源码/查找表分发说明。
+- 上游 C++ 源码和 Dockerfile 随仓库提供；约 2.5 GB 的生成查找表不提交，由用户在
+  首次启动时从随附源码生成。
+- `docs/assets/` 的 PNG/GIF 为真实回放截图/抽帧；没有使用神经网络或伪造素材。
+- README 使用相对路径引用素材和归档回放，便于 GitHub 直接渲染。

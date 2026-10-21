@@ -1,8 +1,34 @@
 # Local run/build artifacts
 *.log
+*.tmp
+*.tmp-*
+*.pid
 
-# AI benchmark reports
+# AI benchmark, challenge, and replay reports
 reports/
+
+# Local dependencies, build output, caches
+node_modules/
+coverage/
+dist/
+.cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Local browser/Docker runtime data
+.edge-profile/
+docker-data/
 
 # Upstream 2048-ai build artifacts (if vendored/built locally)
 vendor/2048-ai/2048
